@@ -224,8 +224,12 @@ waypoints.append(Point(24.0*0.0254, 0.0*0.0254))
 waypoints.append(Point(24.0*0.0254, -24.0*0.0254))
 waypoints.append(Point(40.0*0.0254, -24.0*0.0254))
 waypoints.append(Point(48.0*0.0254, 8.0*0.0254))
+waypoints.append(Point(80.0*0.0254, 8.0*0.0254))
+waypoints.append(Point(80.0*0.0254, -8.0*0.0254))
 
 waypoint_types = []
+waypoint_types.append("INTERMEDIATE")
+waypoint_types.append("INTERMEDIATE")
 waypoint_types.append("CIRCLE")
 waypoint_types.append("INTERMEDIATE")
 waypoint_types.append("CIRCLE")
@@ -273,7 +277,6 @@ initial_heading_estimate = 0.0  # Will be refined if cross detected at home
 
 # Waypoint navigation direction: forward = 1, backward = -1
 wp_direction = 1  # Start going forward through waypoints
-mission_complete = False
 
 while True:
     #motors.set_speeds(max_speed, max_speed)
@@ -411,7 +414,7 @@ while True:
             motors.set_speeds(left_speed, right_speed)
     
     # Handle arrival at waypoint
-    if near_goal and not mission_complete:
+    if near_goal:
         # Determine waypoint type and behavior
         current_wp_type = waypoint_types[wp_ind]
         
@@ -431,10 +434,9 @@ while True:
                 wp_ind = num_wp - 2
                 wp_direction = -1
             elif wp_direction == -1 and wp_ind <= 0:
-                # Reached home going backward - mission complete
-                wp_ind = 0
-                mission_complete = True
-                motors.set_speeds(0, 0)
+                # Reached home going backward - now start forward again
+                wp_ind = 1
+                wp_direction = 1
         
         elif current_wp_type == "CIRCLE":
             # For circle waypoints: check if line sensor sees black within 20cm range
@@ -456,10 +458,9 @@ while True:
                     wp_ind = num_wp - 2
                     wp_direction = -1
                 elif wp_direction == -1 and wp_ind <= 0:
-                    # Reached home going backward - mission complete
-                    wp_ind = 0
-                    mission_complete = True
-                    motors.set_speeds(0, 0)
+                    # Reached home going backward - now start forward again
+                    wp_ind = 1
+                    wp_direction = 1
             else:
                 # Circle waypoint but no black detected yet
                 # Move forward slowly to find it (stay in movement mode)
