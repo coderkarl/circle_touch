@@ -75,15 +75,103 @@ class Point():
     def distance(self):
         return (self.x * self.x + self.y * self.y)**0.5
 
+
+def detect_cross_pattern(line_values, threshold=400):
+    """
+    Detect if robot is crossing a black cross pattern using line sensors.
+    
+    line_values: array of 5 sensor readings from left to right
+    Returns: (cross_detected, lateral_error_m, cross_quality)
+    
+    The cross consists of vertical (Y-axis) and horizontal (X-axis) black lines
+    at the target location. When the robot crosses the center, multiple sensors see black.
+    
+    Raw sensor values: 0-1023 (0=dark, 1023=light)
+    threshold: values below this are considered black
+    
+    Reference from 3π+ specs:
+    - 5 line sensors spaced across robot width
+    - Typical sensor spacing: ~13-16mm apart on 3π+
+    - Total width coverage: ~52-64mm (about 2.1-2.5 inches)
+    """
+    # Count how many sensors see black (low value = dark)
+    black_sensors = [1 if v < threshold else 0 for v in line_values]
+    black_count = sum(black_sensors)
+    
+    # Cross is detected if multiple sensors see black (indicates intersection)
+    if black_count < cross_detect_threshold:
+        return False, 0.0, 0
+    
+    # Calculate center of mass of black sensors to determine position error
+    # Sensors indexed 0-4 from left to right, with sensor 2 being center
+    if black_count == 0:
+        return False, 0.0, 0
+    
+    center_of_black = sum(i * black_sensors[i] for i in range(5)) / black_count
+    center_position = 2.0  # ideal center is at index 2
+    
+    # Sensor spacing on 3π+: approximately 14.4mm between sensors
+    # Total span: ~57.6mm for 5 sensors
+    # 3π+ body width is ~32mm, sensors overhang
+    sensor_spacing_m = 0.0144  # meters between sensors
+    
+    # Lateral offset from center in meters
+    lateral_error_m = (center_of_black - center_position) * sensor_spacing_m
+    
+    # Quality metric: how clear the cross detection is
+    # Based on how many sensors see black and how dark they are
+    cross_quality = black_count
+    
+    return True, lateral_error_m, cross_quality
+
+
+def correct_position_at_target(bot_odom, target_waypoint, lateral_error_m):
+    """
+    When a cross is detected, correct the odometry to match the target.
+    This acts as an absolute position correction.
+    
+    bot_odom: odometry object to update
+    target_waypoint: target Point where the cross was detected
+    lateral_error_m: lateral offset from center line in meters
+    """
+    # Update position to target waypoint
+    bot_odom.botx = target_waypoint.x
+    bot_odom.boty = target_waypoint.y
+    
+    # The cross is aligned with global axes, so heading should be close to 0, 90, 180, or 270 degrees
+    # The lateral error from the sensors tells us if we're aligned or slightly off
+    # For now, we keep the measured heading as-is since the cross constrains position
+    # In future, could refine heading based on which axis the cross was detected on
+    pass
+
+
+
+
 waypoints = []
 waypoints.append(Point(0.0, 0.0))
-waypoints.append(Point(0.3, 0.0))
-waypoints.append(Point(0.3, 0.6))
+waypoints.append(Point(20.5*0.0254, -19.5*0.0254))
+waypoints.append(Point(40.5*0.0254, 1.0*0.0254))
 
 wp_ind = 1
 num_wp = len(waypoints)
 
 line = [0, 0, 0, 0, 0]
+
+# Target circle and cross dimensions (in meters)
+target_circle_radius = 6 * 0.0254 / 2.0  # 6 inch diameter
+cross_arm_length = target_circle_radius  # extends to circle perimeter
+cross_line_thickness = 1 * 0.0254  # 1 inch
+
+# Line sensor thresholds for detecting black
+# Raw sensor values: 0 (dark) to 1023 (light)
+# Black cross lines should read significantly lower than white background
+line_threshold = 400  # values below this are considered black
+cross_detect_threshold = 2  # minimum 2 sensors must see black to detect cross
+
+# Cross detection state
+cross_detected = False
+cross_detect_time = 0
+cross_detect_timeout_ms = 500  # timeout for cross detection state
 
 while True:
     #motors.set_speeds(max_speed, max_speed)
@@ -100,6 +188,22 @@ while True:
         
         line = line_sensors.read()
         line_sensors.start_read()
+        
+        # Detect cross pattern and correct position if found
+        cross_found, lateral_error_m, quality = detect_cross_pattern(line, threshold=line_threshold)
+        if cross_found:
+            # Only correct position near the target waypoint
+            wp = waypoints[wp_ind]
+            bxy = Point(bot_odom.botx, bot_odom.boty)
+            wp_diff = wp - bxy
+            dist_to_target = wp_diff.distance()
+            
+            # If we're reasonably close to a target, use the cross to correct position
+            if dist_to_target < 0.1:  # within 10cm of target
+                # Cross detected at target - correct the odometry
+                correct_position_at_target(bot_odom, wp, lateral_error_m)
+                cross_detected = True
+                cross_detect_time = now
     
     # Desired heading toward waypoint
     wp = waypoints[wp_ind]
@@ -157,6 +261,7 @@ while True:
             wp_ind = 0
         state = state_stop
         next_state = state_track
+        cross_detected = False
     
     if False and (bump_sensors.left_is_pressed() or bump_sensors.right_is_pressed()):
         yellow_led.on()
@@ -187,8 +292,9 @@ while True:
         display.text("X: "+str(xcm), 0, 0)
         display.text("Y: "+str(ycm), 0, 10)
         display.text("Yaw: "+str(yaw_deg), 0, 30)
-        display.text("w: " + str(int(yaw_rate_deg)), 0, 40)
+        cross_str = "X" if cross_detected else " "
+        display.text("w: "+str(int(yaw_rate_deg))+" "+cross_str, 0, 40)
         display.show()
         #print("line", line)
-        print("state %d, LSpd %d, RSpd %d" % (state, left_speed, right_speed))
+        print("state %d, LSpd %d, RSpd %d, line %s" % (state, left_speed, right_speed, str(line)))
         
