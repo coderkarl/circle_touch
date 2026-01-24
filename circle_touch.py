@@ -277,6 +277,7 @@ initial_heading_estimate = 0.0  # Will be refined if cross detected at home
 
 # Waypoint navigation direction: forward = 1, backward = -1
 wp_direction = 1  # Start going forward through waypoints
+last_processed_wp = -1  # Track which waypoint was just processed to avoid double-processing
 
 while True:
     #motors.set_speeds(max_speed, max_speed)
@@ -414,7 +415,7 @@ while True:
             motors.set_speeds(left_speed, right_speed)
     
     # Handle arrival at waypoint
-    if near_goal:
+    if near_goal and wp_ind != last_processed_wp:
         # Determine waypoint type and behavior
         current_wp_type = waypoint_types[wp_ind]
         
@@ -426,6 +427,7 @@ while True:
                 buzzer.play("a32")
                 time.sleep_ms(100)
             time.sleep_ms(300)
+            last_processed_wp = wp_ind  # Mark this waypoint as processed
             wp_ind += wp_direction
             
             # Check if we've completed the forward pass or backward pass
@@ -450,6 +452,7 @@ while True:
                     buzzer.play("a32")
                     time.sleep_ms(100)
                 time.sleep_ms(500)
+                last_processed_wp = wp_ind  # Mark this waypoint as processed
                 wp_ind += wp_direction
                 
                 # Check if we've completed the forward pass or backward pass
