@@ -435,7 +435,7 @@ while True:
                 # Reached end of waypoints, start going backward
                 wp_ind = num_wp - 2
                 wp_direction = -1
-            elif wp_direction == -1 and wp_ind <= 0:
+            elif wp_direction == -1 and wp_ind < 0:  # Changed from <= to < to allow wp_ind=0 to be processed
                 # Reached home going backward - now start forward again
                 wp_ind = 1
                 wp_direction = 1
@@ -460,7 +460,7 @@ while True:
                     # Reached end of waypoints, start going backward
                     wp_ind = num_wp - 2
                     wp_direction = -1
-                elif wp_direction == -1 and wp_ind <= 0:
+                elif wp_direction == -1 and wp_ind < 0:  # Changed from <= to < to allow wp_ind=0 to be processed
                     # Reached home going backward - now start forward again
                     wp_ind = 1
                     wp_direction = 1
