@@ -220,8 +220,17 @@ def correct_heading_at_target(bot_odom, target_waypoint, heading_error_rad):
 
 waypoints = []
 waypoints.append(Point(0.0, 0.0))
-waypoints.append(Point(21.5*0.0254, -21.5*0.0254))
-waypoints.append(Point(39.5*0.0254, -1.0*0.0254))
+waypoints.append(Point(24.0*0.0254, 0.0*0.0254))
+waypoints.append(Point(24.0*0.0254, -24.0*0.0254))
+waypoints.append(Point(40.0*0.0254, -24.0*0.0254))
+waypoints.append(Point(48.0*0.0254, 8.0*0.0254))
+
+waypoint_types = []
+waypoint_types.append("CIRCLE")
+waypoint_types.append("INTERMEDIATE")
+waypoint_types.append("CIRCLE")
+waypoint_types.append("INTERMEDIATE")
+waypoint_types.append("CIRCLE")
 
 wp_ind = 1
 num_wp = len(waypoints)
@@ -249,18 +258,22 @@ cross_detect_timeout_ms = 500  # timeout for cross detection state
 spiral_search_active = False
 spiral_start_time = 0
 spiral_radius_m = 0.0  # starts at 0, increases
-spiral_radius_rate = 0.1  # meters per second spiral expansion
-spiral_turn_speed = 300  # slow turn speed for searching
-spiral_forward_speed = 200  # slow forward speed during spiral
+spiral_radius_rate = 0.15  # meters per second spiral expansion
+spiral_turn_speed = 400  # turn speed for searching
+spiral_forward_speed = 500  # forward speed during spiral (must overcome friction)
 
 # Heading alignment parameters
 heading_aligned = False
 heading_align_threshold_rad = 0.1  # ±0.1 rad (~6 degrees) considered aligned
-heading_align_turn_speed = 200  # slow turning speed for alignment
+heading_align_turn_speed = 350  # turn speed for alignment (must overcome friction)
 
 # Initial heading calibration
-initial_heading_calibrated = False
-initial_heading_estimate = 0.0  # Will be set at startup from cross at home
+initial_heading_calibrated = True  # Start as True - robot assumes it faces +X axis at home
+initial_heading_estimate = 0.0  # Will be refined if cross detected at home
+
+# Waypoint navigation direction: forward = 1, backward = -1
+wp_direction = 1  # Start going forward through waypoints
+mission_complete = False
 
 while True:
     #motors.set_speeds(max_speed, max_speed)
@@ -278,34 +291,15 @@ while True:
         line = line_sensors.read()
         line_sensors.start_read()
         
-        # Detect cross pattern and correct position if found
-        cross_found, lateral_error_m, quality = detect_cross_pattern(line, threshold=line_threshold)
-        heading_error = estimate_heading_error_from_cross(line, True, threshold=line_threshold)
-        extended_line_found, line_pos, line_quality = detect_extended_x_axis_line(line, threshold=line_threshold)
+        # Initialize cross detection variables
+        cross_found = False
+        lateral_error_m = 0.0
+        heading_error = 0.0
+        extended_line_found = False
         
-        if cross_found:
-            # Cross detected - prepare for heading alignment if not at home
-            wp = waypoints[wp_ind]
-            bxy = Point(bot_odom.botx, bot_odom.boty)
-            wp_diff = wp - bxy
-            dist_to_target = wp_diff.distance()
-            
-            # If at home (wp_ind == 0) and heading not calibrated, use cross to calibrate
-            if wp_ind == 0 and not initial_heading_calibrated:
-                # Use the extended X-axis line to determine heading
-                if extended_line_found:
-                    # The cross is aligned with global axes at home
-                    initial_heading_estimate = 0.0  # Front of robot faces +X axis
-                    bot_odom.bot_rad = initial_heading_estimate
-                    initial_heading_calibrated = True
-            
-            # If we're reasonably close to a target and have good cross detection
-            if dist_to_target < 0.15:  # within 15cm of target
-                # Enter heading alignment mode before position correction
-                state = state_stop
-                next_state = state_align_heading
-                cross_detected = True
-                cross_detect_time = now
+        # IMPORTANT: Don't process crosses until we're close to a waypoint
+        # This prevents interference with dead reckoning navigation
+        # We'll check for crosses later when near_goal is true
     
     # Desired heading toward waypoint
     wp = waypoints[wp_ind]
@@ -314,7 +308,7 @@ while True:
     dist_to_goal = wp_diff.distance()
     
     near_goal = False
-    if dist_to_goal < 0.03:
+    if dist_to_goal < 0.05:  # 5cm threshold to allow cross detection before stopping
         near_goal = True
     
     des_heading = wp_diff.angle_deg()
@@ -323,32 +317,43 @@ while True:
     if abs(yaw_error_deg) > 1.0:
         yaw_error_sign = yaw_error_deg / abs(yaw_error_deg)
     
+    # Debug output every 2 seconds
+    if (now - disp_time) > 2000:
+        disp_time = now
+        state_names = ["STOP", "TRACK", "REV", "TURN", "SPIRAL", "ALIGN"]
+        print("State: %s, wp: %d, dist: %.3f, near: %d, yaw_err: %.1f, L:%d R:%d" % 
+              (state_names[state], wp_ind, dist_to_goal, near_goal, yaw_error_deg, left_speed, right_speed))
     left_speed = 0
     right_speed = 0
     
     if state == state_stop:
         motors.set_speeds(0,0)
-        time.sleep_ms(500)
+        time.sleep_ms(200)  # Reduced from 500ms - gives odometry time to update without long pause
         state = next_state
     elif state == state_track:    
         if abs(yaw_error_deg) < 10.0:
+            # Heading is good - move forward
             motors.set_speeds(left_nom_speed, right_nom_speed)
             left_speed = left_nom_speed
             right_speed = right_nom_speed
         elif abs(yaw_error_deg) < 30.0:
+            # Heading is off but not too much - move forward with correction
             offset_cmd = 100.0 * yaw_error_deg / 30.0
-            left_speed = left_nom_speed + offset_cmd
-            right_speed = right_nom_speed - offset_cmd
+            left_speed = int(left_nom_speed + offset_cmd)
+            right_speed = int(right_nom_speed - offset_cmd)
             motors.set_speeds(left_speed, right_speed)
         else:
-            motors.set_speeds(0,0)
+            # Heading is way off - stop and turn
+            motors.set_speeds(0, 0)
             state = state_stop
             next_state = state_turn
     elif state == state_turn:
-        left_speed = left_nom_speed * yaw_error_sign
-        right_speed = -right_nom_speed * yaw_error_sign
+        # Turn in place until heading is better
+        left_speed = int(left_nom_speed * yaw_error_sign)
+        right_speed = int(-right_nom_speed * yaw_error_sign)
         motors.set_speeds(left_speed, right_speed)
-        if abs(yaw_error_deg) < 10.0:
+        if abs(yaw_error_deg) < 15.0:  # Use 15° threshold to exit turn with hysteresis
+            motors.set_speeds(0, 0)
             state = state_stop
             next_state = state_track
     elif state == state_spiral:
@@ -365,8 +370,8 @@ while True:
         spiral_radius_m = spiral_time_s * spiral_radius_rate
         
         # Spiral motion: forward + turn
-        # Forward speed increases with time, turn continuously
-        forward_speed = int(spiral_forward_speed * min(1.0, spiral_time_s / 5.0))  # Ramp up over 5 seconds
+        # Forward speed starts at 50% to overcome friction, ramps to 100% over 3 seconds
+        forward_speed = int(spiral_forward_speed * max(0.5, min(1.0, 0.5 + spiral_time_s / 6.0)))
         turn_speed = spiral_turn_speed
         
         left_speed = forward_speed + turn_speed
@@ -406,28 +411,63 @@ while True:
             motors.set_speeds(left_speed, right_speed)
     
     # Handle arrival at waypoint
-    if near_goal:
-        # Check if cross has been detected at this location
-        if heading_aligned:
-            # Cross detected and heading aligned - move to next waypoint
+    if near_goal and not mission_complete:
+        # Determine waypoint type and behavior
+        current_wp_type = waypoint_types[wp_ind]
+        
+        if current_wp_type == "INTERMEDIATE":
+            # For intermediate waypoints: trust dead reckoning, don't search for cross
+            # Just mark as reached and move to next waypoint
             motors.set_speeds(0, 0)
-            for k in range(4):
+            for k in range(2):
                 buzzer.play("a32")
                 time.sleep_ms(100)
-            time.sleep_ms(500)
-            wp_ind += 1
-            if wp_ind >= num_wp:
+            time.sleep_ms(300)
+            wp_ind += wp_direction
+            
+            # Check if we've completed the forward pass or backward pass
+            if wp_direction == 1 and wp_ind >= num_wp:
+                # Reached end of waypoints, start going backward
+                wp_ind = num_wp - 2
+                wp_direction = -1
+            elif wp_direction == -1 and wp_ind <= 0:
+                # Reached home going backward - mission complete
                 wp_ind = 0
-            state = state_stop
-            next_state = state_track
-            cross_detected = False
-            heading_aligned = False
-        else:
-            # Near goal but cross not found - initiate spiral search
-            if not spiral_search_active:
+                mission_complete = True
                 motors.set_speeds(0, 0)
-                state = state_stop
-                next_state = state_spiral
+        
+        elif current_wp_type == "CIRCLE":
+            # For circle waypoints: check if line sensor sees black within 20cm range
+            # If so, consider waypoint achieved (don't update position, just advance)
+            line_sensor_sees_black = any(s < line_threshold for s in line)
+            
+            if line_sensor_sees_black:
+                # Found the black circle - move to next waypoint
+                motors.set_speeds(0, 0)
+                for k in range(4):
+                    buzzer.play("a32")
+                    time.sleep_ms(100)
+                time.sleep_ms(500)
+                wp_ind += wp_direction
+                
+                # Check if we've completed the forward pass or backward pass
+                if wp_direction == 1 and wp_ind >= num_wp:
+                    # Reached end of waypoints, start going backward
+                    wp_ind = num_wp - 2
+                    wp_direction = -1
+                elif wp_direction == -1 and wp_ind <= 0:
+                    # Reached home going backward - mission complete
+                    wp_ind = 0
+                    mission_complete = True
+                    motors.set_speeds(0, 0)
+            else:
+                # Circle waypoint but no black detected yet
+                # Move forward slowly to find it (stay in movement mode)
+                search_forward_speed = 250
+                search_turn_speed = 60
+                left_speed = search_forward_speed + search_turn_speed
+                right_speed = search_forward_speed - search_turn_speed
+                motors.set_speeds(left_speed, right_speed)
     
 
     if False and (bump_sensors.left_is_pressed() or bump_sensors.right_is_pressed()):

@@ -19,29 +19,40 @@ class Odom():
         self.dist = 0.0
         
         self.counts_per_meter = -1706.0
-        self.gyro_bias_dps = -0.3
+        self.track_width = 3.4 * 0.0254  # 3.4 inches wheel-to-wheel distance, converted to meters
         self.prev_enc_left = 0
         self.prev_enc_right = 0
     
     def update_odom(self, enc_left, enc_right, yaw_rate_deg):
+        """
+        Update odometry using encoder-based differential drive kinematics.
         
-        t2 = time.ticks_ms()
-        t1 = self.prev_msec
-        self.prev_msec = t2
-        dt = (t2 - t1) * 1.e-3
-
+        For differential drive:
+        - Distance: dmeters = (dLeft + dRight) / 2 / counts_per_meter
+        - Heading: dTheta = (dRight - dLeft) / track_width
+        - Position: integrate distance at current heading
+        """
+        
         dleft = enc_left - self.prev_enc_left
         dright = enc_right - self.prev_enc_right
         self.prev_enc_left = enc_left
         self.prev_enc_right = enc_right
         
+        # Distance traveled using encoder deltas (same formula as before)
         dmeters = (dleft + dright) / 2.0 / self.counts_per_meter
         self.dist += dmeters
-        dtheta_rad = (yaw_rate_deg - self.gyro_bias_dps) * math.pi/180.0 * dt
+        
+        # Change in heading from differential motion (encoder-based, no gyro)
+        # Convert encoder deltas to meters, then compute rotation
+        dleft_m = dleft / self.counts_per_meter
+        dright_m = dright / self.counts_per_meter
+        dtheta_rad = (dright_m - dleft_m) / self.track_width
 
-        #update bot position
+        # Update heading
         self.bot_rad = self.bot_rad + dtheta_rad
-        dx = dmeters*math.cos(self.bot_rad)
-        dy = dmeters*math.sin(self.bot_rad)
+        
+        # Update position based on average distance and current heading
+        dx = dmeters * math.cos(self.bot_rad)
+        dy = dmeters * math.sin(self.bot_rad)
         self.botx = self.botx + dx
         self.boty = self.boty + dy
