@@ -149,8 +149,8 @@ def correct_position_at_target(bot_odom, target_waypoint, lateral_error_m):
 
 waypoints = []
 waypoints.append(Point(0.0, 0.0))
-waypoints.append(Point(20.5*0.0254, -19.5*0.0254))
-waypoints.append(Point(40.5*0.0254, 1.0*0.0254))
+waypoints.append(Point(21.5*0.0254, -21.5*0.0254))
+waypoints.append(Point(39.5*0.0254, -1.0*0.0254))
 
 wp_ind = 1
 num_wp = len(waypoints)
