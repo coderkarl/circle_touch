@@ -1,0 +1,16 @@
+{
+  "_note": "Template — replace after running camera_calibrate_offline.py. Copy the output JSON here.",
+  "camera_matrix": [
+    [650.0, 0.0, 640.0],
+    [0.0, 650.0, 360.0],
+    [0.0, 0.0, 1.0]
+  ],
+  "dist_coeffs": [0.0, 0.0, 0.0, 0.0, 0.0],
+  "image_size": [1280, 720],
+  "rms_px": null,
+  "pattern_rows": 6,
+  "pattern_cols": 9,
+  "square_mm": 25.0,
+  "num_images": 0,
+  "timestamp": null
+}

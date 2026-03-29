@@ -1,0 +1,33 @@
+{
+  "_note": [
+    "ArUco marker configuration for aruco_robot_pose.py.",
+    "dictionary: OpenCV ArUco dictionary name (DICT_4X4_50 is compact and robust at distance).",
+    "marker_length_m: physical side length of the printed ArUco marker in meters.",
+    "  Measure the black border-to-border size of the printed marker.",
+    "valid_ids: list of marker IDs to accept. Empty list means accept all detected IDs.",
+    "camera_width, camera_height: must match camera_intrinsics.json image_size.",
+    "fps_target: attempted frame rate. Pi Zero 2W can typically do 5-10 fps at 1280x720 with ArUco.",
+    "uart_device: UART port for sending pose to 3pi+. /dev/ttyAMA0 is the primary UART on Pi Zero header.",
+    "uart_baudrate: must match camera_pose_serial.py on the 3pi+ side.",
+    "log_to_file: save detection log to a CSV file alongside the script.",
+    "annotate_display: draw axes and IDs on captured frames (useful for bench testing, costs CPU)."
+  ],
+  "dictionary": "DICT_4X4_50",
+  "marker_length_m": 0.10,
+  "valid_ids": [],
+  "camera_width": 1280,
+  "camera_height": 720,
+  "fps_target": 5,
+  "uart_device": "/dev/ttyAMA0",
+  "uart_baudrate": 115200,
+  "log_to_file": false,
+  "annotate_display": false,
+  "warmup_s": 2.0,
+  "jpeg_quality": 80,
+  "selection_policy": "nearest",
+  "_selection_policy_note": [
+    "nearest: send the closest valid marker by z_camera distance.",
+    "all: send all detected markers (one line per marker per frame).",
+    "lowest_id: send the marker with the numerically lowest ID."
+  ]
+}

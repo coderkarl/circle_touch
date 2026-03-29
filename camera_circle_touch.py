@@ -1,11 +1,16 @@
 # This example makes the 3pi+ 2040 drive forward until it hits a wall, detect
 # the collision with its bumpers, then reverse, turn, and keep driving.
 
+# camera_circle_touch.py — Pololu 3pi+ 2040 navigation with ArUco camera pose correction.
+# Pi Zero 2W runs aruco_robot_pose.py and sends POSE messages over UART.
+# This file receives those messages via camera_pose_serial.CameraPoseSerial.
+
 from pololu_3pi_2040_robot import robot
 from pololu_3pi_2040_robot.extras import editions
 import time
 import odom
 import math
+import camera_pose_serial
 
 line_sensors = robot.LineSensors()
 encoders = robot.Encoders()
@@ -34,6 +39,10 @@ display.fill(0)
 display.show()
 
 bump_sensors.calibrate()
+
+# Camera pose serial receiver: Pi Zero sends POSE messages over UART at 115200 baud.
+# uart_id=0 uses the default UART0 pins on the 3pi+. Adjust if wired differently.
+cam = camera_pose_serial.CameraPoseSerial(uart_id=0, baudrate=115200, stale_ms=500)
 
 line_sensors.start_read()
 
@@ -216,6 +225,40 @@ def correct_heading_at_target(bot_odom, target_waypoint, heading_error_rad):
     bot_odom.bot_rad = bot_odom.bot_rad + heading_error_rad * 0.1  # Apply 10% correction gradually
 
 
+def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, cam_yaw_deg):
+    """
+    Correct robot odometry using camera-measured ArUco marker pose in the robot frame.
+
+    The camera reports (cam_x_m, cam_y_m) = position of the marker relative to the robot,
+    in the robot frame (x forward, y left).  We know the marker's true position in the map
+    is target_waypoint.  So the robot's true map position is:
+
+      robot_map_x = target_waypoint.x - (cam_x_m * cos(bot_rad) - cam_y_m * sin(bot_rad))
+      robot_map_y = target_waypoint.y - (cam_x_m * sin(bot_rad) + cam_y_m * cos(bot_rad))
+
+    cam_yaw_deg: marker heading in robot frame (CCW from robot +x, degrees).
+    This correction is applied full-strength (not blended), as it is intended to be used
+    when the robot is close to the target and camera confidence is high.
+
+    Future map-frame yaw snapping (not done here):
+      marker_map_yaw_deg = math.degrees(bot_odom.bot_rad) + cam_yaw_deg
+      Snap marker_map_yaw_deg to nearest 90 deg, then update bot_rad accordingly.
+      This is deferred until robot map pose is reliably converged.
+    """
+    cos_h = math.cos(bot_odom.bot_rad)
+    sin_h = math.sin(bot_odom.bot_rad)
+
+    # Corrected robot position in map frame
+    corrected_x = target_waypoint.x - (cam_x_m * cos_h - cam_y_m * sin_h)
+    corrected_y = target_waypoint.y - (cam_x_m * sin_h + cam_y_m * cos_h)
+
+    bot_odom.botx = corrected_x
+    bot_odom.boty = corrected_y
+
+    # (Heading correction from camera yaw is reserved for next phase.)
+    # TODO: snap marker_map_yaw to nearest 90 deg and correct bot_rad here.
+
+
 
 
 waypoints = []
@@ -280,11 +323,18 @@ wp_direction = 1  # Start going forward through waypoints
 last_processed_wp = -1  # Track which waypoint was just processed to avoid double-processing
 
 while True:
-    print("missing var: ", no_var_defined)
     #motors.set_speeds(max_speed, max_speed)
     bump_sensors.read()
     now = time.ticks_ms()
-    
+
+    # Poll camera UART receiver every loop iteration (non-blocking)
+    cam.update()
+    cam_pose = cam.get_nearest(fresh_only=True)
+    cam_x_m    = cam_pose["x_m"]    if cam_pose else None
+    cam_y_m    = cam_pose["y_m"]    if cam_pose else None
+    cam_yaw_deg = cam_pose["yaw_deg"] if cam_pose else None
+    cam_id     = cam_pose["id"]     if cam_pose else None
+
     if imu.gyro.data_ready() and (now - odom_time) > odom_period_msec:
         imu.gyro.read()
         yaw_rate_deg = imu.gyro.last_reading_dps[2]  # degrees per second
@@ -292,19 +342,14 @@ while True:
         enc = encoders.get_counts()
         odom_time = now
         bot_odom.update_odom(enc[0], enc[1], yaw_rate_deg)
-        
+
         line = line_sensors.read()
         line_sensors.start_read()
-        
-        # Initialize cross detection variables
+
+        # Legacy cross detection variables (kept for fallback; not actively used)
         cross_found = False
         lateral_error_m = 0.0
         heading_error = 0.0
-        extended_line_found = False
-        
-        # IMPORTANT: Don't process crosses until we're close to a waypoint
-        # This prevents interference with dead reckoning navigation
-        # We'll check for crosses later when near_goal is true
     
     # Desired heading toward waypoint
     wp = waypoints[wp_ind]
@@ -442,32 +487,60 @@ while True:
                 wp_direction = 1
         
         elif current_wp_type == "CIRCLE":
-            # For circle waypoints: check if line sensor sees black within 20cm range
-            # If so, consider waypoint achieved (don't update position, just advance)
-            line_sensor_sees_black = any(s < line_threshold for s in line)
-            
-            if line_sensor_sees_black:
-                # Found the black circle - move to next waypoint
+            # For circle waypoints: use camera ArUco detection to determine arrival.
+            # The camera reports the marker (x_r, y_r) in the robot frame.
+            # Criteria for "at target":
+            #   - Camera has a fresh detection  AND
+            #   - Marker is within cam_arrive_x_m forward of robot  AND
+            #   - Marker lateral offset |y_r| < cam_arrive_y_m
+            # When arrived, apply camera pose correction to the odometry before advancing.
+            cam_arrive_x_m = 0.20   # marker must be within 20 cm forward
+            cam_arrive_y_m = 0.12   # marker must be within 12 cm lateral
+
+            cam_at_target = (cam_x_m is not None
+                             and 0.0 <= cam_x_m < cam_arrive_x_m
+                             and abs(cam_y_m) < cam_arrive_y_m)
+
+            # Fallback: also accept line sensor if camera is unavailable
+            line_sensor_fallback = (cam_x_m is None
+                                    and any(s < line_threshold for s in line))
+
+            if cam_at_target or line_sensor_fallback:
+                # At the target — apply camera pose correction if available
+                if cam_at_target:
+                    apply_camera_pose_correction(
+                        bot_odom, waypoints[wp_ind],
+                        cam_x_m, cam_y_m, cam_yaw_deg
+                    )
+
                 motors.set_speeds(0, 0)
                 for k in range(4):
                     buzzer.play("a32")
                     time.sleep_ms(100)
                 time.sleep_ms(500)
-                last_processed_wp = wp_ind  # Mark this waypoint as processed
+                last_processed_wp = wp_ind
                 wp_ind += wp_direction
-                
-                # Check if we've completed the forward pass or backward pass
+
                 if wp_direction == 1 and wp_ind >= num_wp:
-                    # Reached end of waypoints, start going backward
                     wp_ind = num_wp - 2
                     wp_direction = -1
-                elif wp_direction == -1 and wp_ind < 0:  # Changed from <= to < to allow wp_ind=0 to be processed
-                    # Reached home going backward - now start forward again
+                elif wp_direction == -1 and wp_ind < 0:
                     wp_ind = 1
                     wp_direction = 1
+
+            elif cam_x_m is not None:
+                # Camera sees the marker but robot is not close enough yet.
+                # Guide the robot toward the marker: steer to reduce y_r, drive forward.
+                cam_steer_gain = 300.0  # motor counts per meter of lateral error
+                steer_cmd = int(cam_steer_gain * cam_y_m)
+                steer_cmd = max(-200, min(200, steer_cmd))
+                approach_speed = 250
+                left_speed = approach_speed - steer_cmd
+                right_speed = approach_speed + steer_cmd
+                motors.set_speeds(left_speed, right_speed)
+
             else:
-                # Circle waypoint but no black detected yet
-                # Move forward slowly to find it (stay in movement mode)
+                # No camera detection near goal — slow forward search
                 search_forward_speed = 250
                 search_turn_speed = 60
                 left_speed = search_forward_speed + search_turn_speed
@@ -504,9 +577,15 @@ while True:
         display.text("X: "+str(xcm), 0, 0)
         display.text("Y: "+str(ycm), 0, 10)
         display.text("Yaw: "+str(yaw_deg), 0, 30)
-        cross_str = "X" if cross_detected else " "
-        display.text("w: "+str(int(yaw_rate_deg))+" "+cross_str, 0, 40)
+        cam_str = "C" if (cam_x_m is not None) else " "
+        pi_str = "P" if cam.pi_alive() else " "
+        display.text("w: "+str(int(yaw_rate_deg))+" "+cam_str+pi_str, 0, 40)
         display.show()
-        #print("line", line)
-        print("state %d, LSpd %d, RSpd %d, line %s" % (state, left_speed, right_speed, str(line)))
+        if cam_x_m is not None:
+            print("state %d, LSpd %d, RSpd %d, cam id=%s x=%.3f y=%.3f yaw=%.1f" %
+                  (state, left_speed, right_speed, str(cam_id),
+                   cam_x_m, cam_y_m, cam_yaw_deg))
+        else:
+            print("state %d, LSpd %d, RSpd %d, no cam, pi=%s" %
+                  (state, left_speed, right_speed, str(cam.pi_alive())))
         

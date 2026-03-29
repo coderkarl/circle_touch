@@ -1,0 +1,18 @@
+[Unit]
+Description=Pi Camera Capture Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/sensor_node
+ExecStart=/usr/bin/python3 /home/pi/sensor_node/camera/camera_capture.py --output-dir /home/pi/sensor_node/captures --interval 1.0 --width 1280 --height 720
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

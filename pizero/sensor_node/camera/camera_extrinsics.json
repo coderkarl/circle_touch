@@ -1,0 +1,27 @@
+{
+  "_note": [
+    "Camera mount parameters relative to robot frame.",
+    "Robot frame: x forward, y left, z up.",
+    "Camera frame (OpenCV): x right, y down, z forward (optical axis).",
+    "Measure these values from the robot center of rotation to the camera lens center.",
+    "Positive camera_x_r_m = camera is in front of robot center.",
+    "Positive camera_y_r_m = camera is to the left of robot center.",
+    "Positive camera_z_r_m = camera is above ground.",
+    "pitch_deg = degrees the camera tilts DOWN from horizontal (0 = flat, 45 = 45deg down, 90 = straight down).",
+    "yaw_deg = small heading trim if camera is not exactly facing forward (positive = rotated left).",
+    "roll_deg = small roll trim (normally 0)."
+  ],
+  "camera_x_r_m": 0.05,
+  "camera_y_r_m": 0.0,
+  "camera_z_r_m": 0.12,
+  "pitch_deg": 45.0,
+  "yaw_deg": 0.0,
+  "roll_deg": 0.0,
+  "_calibration_note": [
+    "To calibrate extrinsics: place an ArUco marker at a known position",
+    "relative to the robot (e.g., directly in front at X=0.3m, Y=0),",
+    "run aruco_robot_pose.py, and compare the reported x,y to the tape-measured values.",
+    "Adjust camera_x_r_m, camera_z_r_m, and pitch_deg to minimize error.",
+    "Do this after intrinsic calibration is complete."
+  ]
+}

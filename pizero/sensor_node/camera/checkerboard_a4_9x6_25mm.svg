@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="297.0mm" height="210.0mm"
+     viewBox="0 0 297.0 210.0">
+  <!-- A4 Landscape, 297x210 mm -->
+  <!-- Checkerboard: 10x7 squares, 25mm per square -->
+  <!-- Internal corners: 9x6 (OpenCV calibration pattern_size=(9,6)) -->
+  <!-- Board area: 250x175mm centered at (23.5,17.5) -->
+  <!-- PRINT AT 100% SCALE - do NOT fit to page. Verify squares are 25mm with a ruler. -->
+
+  <!-- White page background -->
+  <rect x="0" y="0" width="297.0" height="210.0" fill="white"/>
+
+  <!-- Board outline for visual reference -->
+  <rect x="23.5" y="17.5" width="250.0" height="175.0" fill="white" stroke="black" stroke-width="0.3"/>
+
+  <!-- Black squares -->
+  <rect x="23.5" y="17.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="73.5" y="17.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="123.5" y="17.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="173.5" y="17.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="223.5" y="17.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="48.5" y="42.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="98.5" y="42.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="148.5" y="42.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="198.5" y="42.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="248.5" y="42.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="23.5" y="67.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="73.5" y="67.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="123.5" y="67.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="173.5" y="67.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="223.5" y="67.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="48.5" y="92.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="98.5" y="92.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="148.5" y="92.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="198.5" y="92.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="248.5" y="92.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="23.5" y="117.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="73.5" y="117.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="123.5" y="117.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="173.5" y="117.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="223.5" y="117.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="48.5" y="142.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="98.5" y="142.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="148.5" y="142.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="198.5" y="142.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="248.5" y="142.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="23.5" y="167.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="73.5" y="167.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="123.5" y="167.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="173.5" y="167.5" width="25.0" height="25.0" fill="black"/>
+  <rect x="223.5" y="167.5" width="25.0" height="25.0" fill="black"/>
+
+  <!-- Label -->
+  <text x="148.5" y="13.5" font-family="sans-serif" font-size="3.5"
+        text-anchor="middle" fill="#444">
+    Circle-Touch Calibration: 10x7 squares @ 25mm — print at 100%, no scaling — verify with ruler</text>
+</svg>
