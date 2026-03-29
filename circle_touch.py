@@ -280,6 +280,7 @@ wp_direction = 1  # Start going forward through waypoints
 last_processed_wp = -1  # Track which waypoint was just processed to avoid double-processing
 
 while True:
+    print("missing var: ", no_var_defined)
     #motors.set_speeds(max_speed, max_speed)
     bump_sensors.read()
     now = time.ticks_ms()
