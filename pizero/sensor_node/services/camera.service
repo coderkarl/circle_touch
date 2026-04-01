@@ -1,5 +1,5 @@
 [Unit]
-Description=Pi Camera Capture Service
+Description=Pi Camera ArUco Pose Service
 After=network-online.target
 Wants=network-online.target
 
@@ -7,8 +7,8 @@ Wants=network-online.target
 Type=simple
 User=pi
 Group=pi
-WorkingDirectory=/home/pi/sensor_node
-ExecStart=/usr/bin/python3 /home/pi/sensor_node/camera/camera_capture.py --output-dir /home/pi/sensor_node/captures --interval 1.0 --width 1280 --height 720
+WorkingDirectory=/home/pi/sensor_node/camera
+ExecStart=/usr/bin/python3 /home/pi/sensor_node/camera/aruco_robot_pose.py
 Restart=always
 RestartSec=2
 StandardOutput=journal

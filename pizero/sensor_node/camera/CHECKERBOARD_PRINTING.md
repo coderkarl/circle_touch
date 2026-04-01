@@ -4,6 +4,8 @@
 
 `checkerboard_a4_9x6_25mm.svg`
 
+`checkerboard_a4_9x6_25mm.pdf` (preferred for printing on Ubuntu)
+
 ## Board Spec
 
 | Property | Value |
@@ -21,6 +23,28 @@
 3. Select **A4 Landscape** in the printer dialog.
 4. Print on plain white paper (not glossy — glossy causes glare in camera images).
 
+### Ubuntu (Image Viewer) Workaround
+
+Ubuntu Image Viewer often auto-scales SVGs for the printable area, which can shrink the board.
+
+Use one of these instead:
+
+- **Inkscape**: Open SVG → `File` → `Print` → set scale to **100%** and disable fit/shrink options.
+- **PDF path (recommended)**:
+
+```bash
+cd /home/karl/robots/circle_touch/pizero/sensor_node/camera
+rsvg-convert -f pdf -o checkerboard_a4_9x6_25mm.pdf checkerboard_a4_9x6_25mm.svg
+```
+
+Then open the PDF in Document Viewer (Evince) and print with:
+
+- Paper size: **A4**
+- Orientation: **Landscape**
+- Page scaling: **None / 100% / Actual size**
+
+If your printer has an option like "Fit to printable area", keep it **off**.
+
 ## Verify After Printing
 
 Measure several squares with a ruler or calipers:
@@ -28,6 +52,7 @@ Measure several squares with a ruler or calipers:
 - Each square should measure **25.0 mm ± 0.5 mm**.
 - If squares are a different size, check your printer's scale setting and reprint.
 - The entire board (10×7 squares) should measure **250 mm × 175 mm**.
+- Quick inch check: 10 squares × 25 mm = **250 mm ≈ 9.84 in** (not exactly 10 in).
 
 If the measured size differs significantly (e.g., printer scaled to Letter paper), either:
 - Reprint at the correct scale on A4 paper, or

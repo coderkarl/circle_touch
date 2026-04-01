@@ -47,10 +47,10 @@ aruco_robot_pose.py                        camera_circle_touch.py
   ├─ transform to robot frame                └─ apply camera pose correction
   └─ UART TX → JSON line/msg                      at CIRCLE waypoints
          │
-     [UART TX]  ──────────────────────────  [UART RX]  /dev/ttyAMA0 ↔ 3pi+ GP0/GP1
+	[UART TX]  ──────────────────────────  [UART RX]  /dev/serial0 ↔ 3pi+ GP0/GP1
 ```
 
-Pi Zero UART: `/dev/ttyAMA0` at 115200 baud (GP0=TX, GP1=RX on Pi Zero header).
+Pi Zero UART: `/dev/serial0` at 115200 baud (GP0=TX, GP1=RX on Pi Zero header).
 3pi+ UART: `machine.UART(0, 115200)` on its default pins.
 
 Processes on Pi Zero:
@@ -77,6 +77,9 @@ Processes on Pi Zero:
 Run these commands after first login:
 
 ```bash
+sudo dpkg-reconfigure locales
+# Select en_US.UTF-8 UTF-8
+# Choose en_US.UTF-8 as default
 sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y git vim tmux htop i2c-tools v4l-utils usbutils \
@@ -94,29 +97,26 @@ After reboot, SSH back in.
 
 ```bash
 sudo apt update
-sudo apt install -y libcamera-apps python3-picamera2 python3-opencv
+sudo apt install -y rpicam-apps python3-picamera2 python3-opencv
 ```
 
 `python3-opencv` from apt includes pre-built ArUco support on Bookworm.
 
-### 2) Check camera visibility
+### 2) Check camera
 
 ```bash
-libcamera-hello -t 5000
+# legacy command names on older images: libcamera-hello/libcamera-still
+rpicam-hello -t 2000 --nopreview
+rpicam-still -o ~/cam_test.jpg --nopreview
 ```
 
-Expected: preview initializes with no camera errors.
+scp test image to laptop and verify
 
-### 3) Capture still image test
-
-```bash
-libcamera-still -o ~/cam_test.jpg
-ls -lh ~/cam_test.jpg
-```
+Expected: nopreview initializes with no camera errors.
 
 Expected: image file exists and has non-zero size.
 
-### 4) Python Picamera2 test
+### 3) Python Picamera2 test
 
 ```bash
 python3 - <<'PY'
@@ -165,7 +165,7 @@ sudo reboot
 Verify UART device exists after reboot:
 
 ```bash
-ls -l /dev/ttyAMA0
+ls -l /dev/serial0 /dev/ttyS0
 ```
 
 Connect Pi Zero GPIO 14 (TX) → 3pi+ UART RX pin and GPIO 15 (RX) → 3pi+ UART TX pin.
@@ -191,7 +191,7 @@ Baud rate: **115200** on both sides.
 		cal_images/                <- checkerboard images for calibration
 	logs/
 	services/
-		aruco_pose.service
+		camera.service            <- systemd unit for camera/pose runtime
 ```
 
 ---
@@ -202,7 +202,7 @@ The following files are available locally in this workspace under `pizero/sensor
 
 | File | Purpose |
 |---|---|
-| `camera_capture.py` | General periodic still capture |
+| `camera_capture.py` | General periodic still capture utility for manual/debug use |
 | `camera_cal_data.py` | Capture checkerboard images for calibration |
 | `camera_calibrate_offline.py` | Solve camera intrinsics from checkerboard images (run on laptop) |
 | `camera_intrinsics.json` | Template; replaced by calibration output |
@@ -299,7 +299,7 @@ python3 /home/pi/sensor_node/camera/aruco_robot_pose.py
 1. Flash Pi Zero 2W with Raspberry Pi OS Lite (Bookworm, 32-bit), enable SSH.
 2. Install software stack (`apt` packages above).
 3. Configure UART: disable serial console, enable hardware UART.
-4. Confirm camera smoke tests pass (`libcamera-hello`, `picam2_test.jpg`).
+4. Confirm camera smoke tests pass (`rpicam-hello`, `picam2_test.jpg`).
 5. Print and verify checkerboard.
 6. Capture calibration images; run calibration solver.
 7. Mount camera on robot; measure and fill in `camera_extrinsics.json`.
@@ -328,3 +328,11 @@ python3 /home/pi/sensor_node/camera/aruco_robot_pose.py
 - Keep `camera_intrinsics.json` in version control after calibration so it is not lost.
 - If markers appear at the edge of frame, increase `--width`/`--height` or adjust camera mount angle.
 - See `POSE_PROTOCOL.md` for the UART message format and `camera_pose_serial.py` for the 3pi+ receiver.
+
+## pi zero services
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart camera.service
+sudo systemctl status camera.service
+journalctl -u [camera.service](http://_vscodecontentref_/10) -f
+```

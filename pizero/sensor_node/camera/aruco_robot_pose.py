@@ -348,7 +348,7 @@ def main() -> int:
     # ── UART ───────────────────────────────────────────────────────────────
     uart = None
     if not args.no_uart:
-        uart_dev = str(cfg.get("uart_device", "/dev/ttyAMA0"))
+        uart_dev = str(cfg.get("uart_device", "/dev/serial0"))
         uart_baud = int(cfg.get("uart_baudrate", 115200))
         uart = open_uart(uart_dev, uart_baud)
         if uart:

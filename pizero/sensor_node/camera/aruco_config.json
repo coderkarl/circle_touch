@@ -7,7 +7,7 @@
     "valid_ids: list of marker IDs to accept. Empty list means accept all detected IDs.",
     "camera_width, camera_height: must match camera_intrinsics.json image_size.",
     "fps_target: attempted frame rate. Pi Zero 2W can typically do 5-10 fps at 1280x720 with ArUco.",
-    "uart_device: UART port for sending pose to 3pi+. /dev/ttyAMA0 is the primary UART on Pi Zero header.",
+    "uart_device: UART port for sending pose to 3pi+. Prefer /dev/serial0 as the stable alias for the primary GPIO UART on Raspberry Pi OS.",
     "uart_baudrate: must match camera_pose_serial.py on the 3pi+ side.",
     "log_to_file: save detection log to a CSV file alongside the script.",
     "annotate_display: draw axes and IDs on captured frames (useful for bench testing, costs CPU)."
@@ -18,7 +18,7 @@
   "camera_width": 1280,
   "camera_height": 720,
   "fps_target": 5,
-  "uart_device": "/dev/ttyAMA0",
+  "uart_device": "/dev/serial0",
   "uart_baudrate": 115200,
   "log_to_file": false,
   "annotate_display": false,
