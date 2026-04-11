@@ -13,7 +13,7 @@
     "annotate_display: draw axes and IDs on captured frames (useful for bench testing, costs CPU)."
   ],
   "dictionary": "DICT_4X4_50",
-  "marker_length_m": 0.10,
+  "marker_length_m": 0.05,
   "valid_ids": [],
   "camera_width": 1280,
   "camera_height": 720,

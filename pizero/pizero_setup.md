@@ -72,6 +72,128 @@ Processes on Pi Zero:
 
 ---
 
+## Headless Networking Across Multiple Locations (No SSH Required)
+
+If the Pi may boot where your laptop is not already on the same network, pre-provision multiple Wi-Fi options before deployment.
+
+### Why the long `90-NM-<UUID>.yaml` names
+
+- These files are NetworkManager-backed netplan connection profiles.
+- UUID is the stable unique ID for each profile; filenames like `wlan0.yaml` are ambiguous when multiple profiles exist.
+- For this setup, treat `/etc/netplan/90-NM-*.yaml` as the source of truth for network profiles.
+
+### Option A (recommended): one Wi-Fi profile with multiple SSIDs
+
+Edit the existing Wi-Fi file on the Pi (or by mounting the SD card on another machine):
+
+`/etc/netplan/90-NM-<UUID1>.yaml`
+
+```yaml
+network:
+	version: 2
+	wifis:
+		wlan0:
+			renderer: NetworkManager
+			dhcp4: true
+			access-points:
+				HOME_SSID:
+					auth:
+						key-management: "psk"
+						password: "HOME_PASSWORD"
+				LAB_SSID:
+					auth:
+						key-management: "psk"
+						password: "LAB_PASSWORD"
+			networkmanager:
+				uuid: "<UUID1>"
+				name: "netplan-wlan0"
+```
+
+Notes:
+- Keep indentation exact (2 spaces per level).
+- Quote passwords, especially if they contain special characters.
+- You can keep or remove `match: {}`; it is not required.
+- On next boot, NetworkManager should connect to whichever SSID is available.
+
+### Option B: separate Wi-Fi profile per SSID
+
+Create another file such as `/etc/netplan/90-NM-<UUID3>.yaml` with the same `wlan0` structure but a different `networkmanager.uuid` and a single `access-points` entry for the second SSID.
+
+This is useful if you want per-network priorities and easier enable/disable behavior.
+
+### Safe workflow when editing offline
+
+1. Power down Pi and remove SD card.
+2. Mount Linux root partition on your laptop.
+3. Edit `/etc/netplan/90-NM-*.yaml`.
+4. Save and unmount cleanly.
+5. Boot Pi at the target site.
+
+If the Pi still does not join Wi-Fi, connect HDMI/USB keyboard once and run:
+
+```bash
+sudo netplan generate
+sudo netplan apply
+sudo journalctl -u NetworkManager -b --no-pager | tail -n 200
+```
+
+### Optional: boot-time auto-connect script using `nmcli`
+
+Use this only if you specifically want scripted retries. In most cases, Option A is simpler and more robust.
+
+`/usr/local/bin/wifi-fallback.sh`
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# SSID:PSK pairs (edit)
+NETWORKS=(
+	"HOME_SSID:HOME_PASSWORD"
+	"LAB_SSID:LAB_PASSWORD"
+)
+
+nmcli radio wifi on || true
+sleep 3
+
+for entry in "${NETWORKS[@]}"; do
+	ssid="${entry%%:*}"
+	psk="${entry#*:}"
+	if nmcli -t -f SSID dev wifi list ifname wlan0 | grep -Fxq "$ssid"; then
+		nmcli dev wifi connect "$ssid" password "$psk" ifname wlan0 && exit 0
+	fi
+done
+
+exit 1
+```
+
+`/etc/systemd/system/wifi-fallback.service`
+
+```ini
+[Unit]
+Description=WiFi fallback connector
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wifi-fallback.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable it once:
+
+```bash
+sudo chmod 700 /usr/local/bin/wifi-fallback.sh
+sudo systemctl daemon-reload
+sudo systemctl enable wifi-fallback.service
+```
+
+---
+
 ## First SSH Session: Base Setup
 
 Run these commands after first login:

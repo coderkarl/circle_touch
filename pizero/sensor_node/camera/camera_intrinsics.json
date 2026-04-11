@@ -1,16 +1,37 @@
 {
-  "_note": "Template — replace after running camera_calibrate_offline.py. Copy the output JSON here.",
   "camera_matrix": [
-    [650.0, 0.0, 640.0],
-    [0.0, 650.0, 360.0],
-    [0.0, 0.0, 1.0]
+    [
+      1572.150565787716,
+      0.0,
+      617.3696214226643
+    ],
+    [
+      0.0,
+      1576.2154190838546,
+      318.99055452105466
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
   ],
-  "dist_coeffs": [0.0, 0.0, 0.0, 0.0, 0.0],
-  "image_size": [1280, 720],
-  "rms_px": null,
+  "dist_coeffs": [
+    0.23210175256716548,
+    -1.135854847368581,
+    -0.011258328536865272,
+    -0.0016509983665684463,
+    1.9507451052594382
+  ],
+  "image_size": [
+    1280,
+    720
+  ],
+  "rms_px": 1.2016839800973254,
   "pattern_rows": 6,
   "pattern_cols": 9,
   "square_mm": 25.0,
-  "num_images": 0,
-  "timestamp": null
+  "num_images": 149,
+  "timestamp": "2026-04-11T04:09:47.726767+00:00",
+  "_note": "camera_matrix is [[fx,0,cx],[0,fy,cy],[0,0,1]]. dist_coeffs is [k1,k2,p1,p2,k3]. Units: pixels for fx/fy/cx/cy."
 }
