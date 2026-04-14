@@ -330,6 +330,10 @@ def main() -> int:
                         help="Disable UART output (bench test / laptop mode)")
     parser.add_argument("--save-annotated", default="",
                         help="If set, save annotated JPEG frames to this directory")
+    parser.add_argument("--save-raw", default="",
+                        help="If set, save raw JPEG frames to this directory")
+    parser.add_argument("--save-every", type=int, default=1,
+                        help="Save one frame every N frames for --save-annotated/--save-raw (default: 1)")
     parser.add_argument("--verbose", action="store_true", help="Extra debug output")
     args = parser.parse_args()
 
@@ -432,6 +436,13 @@ def main() -> int:
         ann_dir = Path(args.save_annotated)
         ann_dir.mkdir(parents=True, exist_ok=True)
 
+    raw_dir: Optional[Path] = None
+    if args.save_raw:
+        raw_dir = Path(args.save_raw)
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
+    save_every = max(1, int(args.save_every))
+
     log_to_file = bool(cfg.get("log_to_file", False))
     log_file = None
     if log_to_file:
@@ -482,6 +493,8 @@ def main() -> int:
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
             elif frame.shape[2] == 3:
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+            frame_raw = frame.copy()
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             if bool(cfg.get("preprocess_equalize", False)):
@@ -581,10 +594,6 @@ def main() -> int:
                         if args.verbose:
                             print(f"  UART send error: {e}")
 
-            if args.verbose and (ids is None or len(ids) == 0) and (frame_count % 20 == 0):
-                blur_metric = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-                print(f"  no-tag blur_metric={blur_metric:.1f}")
-
                 if log_file is not None:
                     log_file.write(
                         f"{timestamp_ms},{d['id']},"
@@ -593,10 +602,20 @@ def main() -> int:
                     )
                     log_file.flush()
 
+            if args.verbose and (ids is None or len(ids) == 0) and (frame_count % 20 == 0):
+                blur_metric = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                print(f"  no-tag blur_metric={blur_metric:.1f}")
+
             # ── Save annotated frame ───────────────────────────────────────
-            if ann_dir is not None:
+            if ann_dir is not None and (frame_count % save_every == 0):
                 ann_path = ann_dir / f"frame_{frame_count:06d}.jpg"
                 cv2.imwrite(str(ann_path), frame,
+                            [cv2.IMWRITE_JPEG_QUALITY, int(cfg.get("jpeg_quality", 80))])
+
+            # ── Save raw frame (pre-annotation) ───────────────────────────
+            if raw_dir is not None and (frame_count % save_every == 0):
+                raw_path = raw_dir / f"raw_{frame_count:06d}.jpg"
+                cv2.imwrite(str(raw_path), frame_raw,
                             [cv2.IMWRITE_JPEG_QUALITY, int(cfg.get("jpeg_quality", 80))])
 
             # ── Periodic stats ─────────────────────────────────────────────
