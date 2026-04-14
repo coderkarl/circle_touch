@@ -18,6 +18,8 @@
   "camera_width": 1280,
   "camera_height": 720,
   "fps_target": 5,
+  "auto_exposure": true,
+  "preprocess_equalize": false,
   "uart_device": "/dev/serial0",
   "uart_baudrate": 115200,
   "log_to_file": false,

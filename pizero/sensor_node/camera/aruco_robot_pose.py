@@ -127,7 +127,7 @@ def build_rotation_rc(pitch_deg: float, yaw_deg: float, roll_deg: float) -> np.n
     return R_yaw @ R_roll @ R_base
 
 
-def build_aruco_detector(dictionary_name: str):
+def build_aruco_detector(dictionary_name: str, detector_cfg: Optional[dict] = None):
     """Build an ArUco detector, handling both modern and legacy OpenCV APIs."""
     aruco_dicts = {
         name: getattr(cv2.aruco, name)
@@ -150,6 +150,66 @@ def build_aruco_detector(dictionary_name: str):
                   else cv2.aruco.DetectorParameters())
         detector = None
         legacy = True
+
+    detector_cfg = detector_cfg or {}
+
+    # Numeric detector parameter overrides from config
+    numeric_fields = {
+        "adaptiveThreshWinSizeMin": int,
+        "adaptiveThreshWinSizeMax": int,
+        "adaptiveThreshWinSizeStep": int,
+        "adaptiveThreshConstant": float,
+        "minMarkerPerimeterRate": float,
+        "maxMarkerPerimeterRate": float,
+        "polygonalApproxAccuracyRate": float,
+        "minCornerDistanceRate": float,
+        "minDistanceToBorder": int,
+        "minOtsuStdDev": float,
+        "perspectiveRemoveIgnoredMarginPerCell": float,
+        "maxErroneousBitsInBorderRate": float,
+        "errorCorrectionRate": float,
+    }
+
+    for key, cast in numeric_fields.items():
+        if key in detector_cfg and hasattr(params, key):
+            try:
+                setattr(params, key, cast(detector_cfg[key]))
+            except Exception:
+                pass
+
+    # Corner refinement mode from config: NONE | SUBPIX | CONTOUR | APRILTAG
+    refine = str(detector_cfg.get("cornerRefinementMethod", "SUBPIX")).upper()
+    refine_map = {
+        "NONE": getattr(cv2.aruco, "CORNER_REFINE_NONE", 0),
+        "SUBPIX": getattr(cv2.aruco, "CORNER_REFINE_SUBPIX", 1),
+        "CONTOUR": getattr(cv2.aruco, "CORNER_REFINE_CONTOUR", 2),
+        "APRILTAG": getattr(cv2.aruco, "CORNER_REFINE_APRILTAG", 3),
+    }
+    if hasattr(params, "cornerRefinementMethod"):
+        params.cornerRefinementMethod = refine_map.get(refine, refine_map["SUBPIX"])
+
+    if hasattr(params, "cornerRefinementWinSize") and "cornerRefinementWinSize" in detector_cfg:
+        try:
+            params.cornerRefinementWinSize = int(detector_cfg["cornerRefinementWinSize"])
+        except Exception:
+            pass
+    if hasattr(params, "cornerRefinementMaxIterations") and "cornerRefinementMaxIterations" in detector_cfg:
+        try:
+            params.cornerRefinementMaxIterations = int(detector_cfg["cornerRefinementMaxIterations"])
+        except Exception:
+            pass
+    if hasattr(params, "cornerRefinementMinAccuracy") and "cornerRefinementMinAccuracy" in detector_cfg:
+        try:
+            params.cornerRefinementMinAccuracy = float(detector_cfg["cornerRefinementMinAccuracy"])
+        except Exception:
+            pass
+
+    if hasattr(params, "detectInvertedMarker") and "detectInvertedMarker" in detector_cfg:
+        params.detectInvertedMarker = bool(detector_cfg["detectInvertedMarker"])
+
+    # Rebuild detector with updated params for modern API
+    if not legacy:
+        detector = cv2.aruco.ArucoDetector(aruco_dict, params)
 
     return aruco_dict, detector, params, legacy
 
@@ -228,7 +288,16 @@ def open_uart(device: str, baudrate: int):
     """Open UART serial port. Returns serial.Serial or None on failure."""
     try:
         import serial
-        port = serial.Serial(device, baudrate, timeout=0.05)
+        port = serial.Serial(
+            device,
+            baudrate,
+            timeout=0.0,
+            write_timeout=0.0,
+            inter_byte_timeout=0.0,
+            rtscts=False,
+            dsrdtr=False,
+            xonxoff=False,
+        )
         return port
     except ImportError:
         print("pyserial not installed — UART disabled. Run: pip3 install pyserial", file=sys.stderr)
@@ -323,7 +392,8 @@ def main() -> int:
     cam_h = int(cfg.get("camera_height", img_h))
     warmup_s = float(cfg.get("warmup_s", 2.0))
 
-    aruco_dict, detector, params, legacy = build_aruco_detector(dictionary_name)
+    detector_cfg = dict(cfg.get("detector_params", {}))
+    aruco_dict, detector, params, legacy = build_aruco_detector(dictionary_name, detector_cfg)
 
     print(f"ArUco: {dictionary_name}, marker={marker_length_m*1000:.0f}mm, "
           f"valid_ids={valid_ids or 'all'}, policy={selection_policy}")
@@ -388,7 +458,22 @@ def main() -> int:
             t_next = time.time() + frame_interval_s
 
             # Grab frame as numpy array (BGR)
-            frame = picam2.capture_array()
+            try:
+                frame = picam2.capture_array()
+            except Exception as e:
+                print(f"camera capture error: {e}", file=sys.stderr)
+                try:
+                    picam2.stop()
+                except Exception:
+                    pass
+                time.sleep(0.2)
+                try:
+                    picam2.start()
+                    time.sleep(0.5)
+                except Exception as e2:
+                    print(f"camera restart failed: {e2}", file=sys.stderr)
+                    time.sleep(1.0)
+                continue
             timestamp_ms = int((time.time() - t_start) * 1000)
             frame_count += 1
 
@@ -399,6 +484,8 @@ def main() -> int:
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if bool(cfg.get("preprocess_equalize", False)):
+                gray = cv2.equalizeHist(gray)
             gray = np.ascontiguousarray(gray, dtype=np.uint8)
 
             corners, ids = detect_markers(gray, aruco_dict, detector, params, legacy)
@@ -493,6 +580,10 @@ def main() -> int:
                     except Exception as e:
                         if args.verbose:
                             print(f"  UART send error: {e}")
+
+            if args.verbose and (ids is None or len(ids) == 0) and (frame_count % 20 == 0):
+                blur_metric = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                print(f"  no-tag blur_metric={blur_metric:.1f}")
 
                 if log_file is not None:
                     log_file.write(

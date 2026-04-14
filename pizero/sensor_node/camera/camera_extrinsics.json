@@ -11,10 +11,10 @@
     "yaw_deg = small heading trim if camera is not exactly facing forward (positive = rotated left).",
     "roll_deg = small roll trim (normally 0)."
   ],
-  "camera_x_r_m": 0.03,
+  "camera_x_r_m": 0.025,
   "camera_y_r_m": 0.0,
   "camera_z_r_m": 0.08,
-  "pitch_deg": 45.0,
+  "pitch_deg": 30.0,
   "yaw_deg": 0.0,
   "roll_deg": 0.0,
   "_calibration_note": [

@@ -1,7 +1,7 @@
 # This example makes the 3pi+ 2040 drive forward until it hits a wall, detect
 # the collision with its bumpers, then reverse, turn, and keep driving.
 
-# camera_circle_touch.py — Pololu 3pi+ 2040 navigation with ArUco camera pose correction.
+# camera_circle_touch.py - Pololu 3pi+ 2040 navigation with ArUco camera pose correction.
 # Pi Zero 2W runs aruco_robot_pose.py and sends POSE messages over UART.
 # This file receives those messages via camera_pose_serial.CameraPoseSerial.
 
@@ -11,11 +11,14 @@ import time
 import odom
 import math
 import camera_pose_serial
+import machine
+import sys
 
 line_sensors = robot.LineSensors()
 encoders = robot.Encoders()
 motors = robot.Motors()
 bot_odom = odom.Odom()
+bot_odom.bot_rad = math.pi/2  # Start with heading aligned to +X axis of the map
 bump_sensors = robot.BumpSensors()
 buzzer = robot.Buzzer()
 display = robot.Display()
@@ -27,11 +30,11 @@ imu.enable_default()
 
 edition = "Hyper"
 if edition == "Hyper":
-    max_speed = 1125
-    left_nom_speed = 750
-    right_nom_speed = 750
-    turn_speed = 700
-    turn_time = 150
+    max_speed = 1300
+    left_nom_speed = 850
+    right_nom_speed = 850
+    turn_speed = 800
+    turn_time = 125
     motors.flip_left(True)
     motors.flip_right(True)
 
@@ -42,7 +45,8 @@ bump_sensors.calibrate()
 
 # Camera pose serial receiver: Pi Zero sends POSE messages over UART at 115200 baud.
 # uart_id=0 uses the default UART0 pins on the 3pi+. Adjust if wired differently.
-cam = camera_pose_serial.CameraPoseSerial(uart_id=0, baudrate=115200, stale_ms=500)
+cam = camera_pose_serial.CameraPoseSerial(uart_id=0, baudrate=115200, stale_ms=500,
+                                          tx_pin=machine.Pin(28), rx_pin=machine.Pin(29))
 
 line_sensors.start_read()
 
@@ -100,9 +104,9 @@ def detect_cross_pattern(line_values, threshold=400):
     Raw sensor values: 0-1023 (0=dark, 1023=light)
     threshold: values below this are considered black
     
-    Reference from 3π+ specs:
+    Reference from 3pi+ specs:
     - 5 line sensors spaced across robot width
-    - Typical sensor spacing: ~13-16mm apart on 3π+
+    - Typical sensor spacing: ~13-16mm apart on 3pi+
     - Total width coverage: ~52-64mm (about 2.1-2.5 inches)
     """
     # Count how many sensors see black (low value = dark)
@@ -121,9 +125,9 @@ def detect_cross_pattern(line_values, threshold=400):
     center_of_black = sum(i * black_sensors[i] for i in range(5)) / black_count
     center_position = 2.0  # ideal center is at index 2
     
-    # Sensor spacing on 3π+: approximately 14.4mm between sensors
+    # Sensor spacing on 3pi+: approximately 14.4mm between sensors
     # Total span: ~57.6mm for 5 sensors
-    # 3π+ body width is ~32mm, sensors overhang
+    # 3pi+ body width is ~32mm, sensors overhang
     sensor_spacing_m = 0.0144  # meters between sensors
     
     # Lateral offset from center in meters
@@ -188,7 +192,7 @@ def estimate_heading_error_from_cross(line_values, center_y_detected, threshold=
     offset_sensors = center_of_black - center_position
     
     # Heading error estimate: offset_sensors * ~0.3 radians per sensor
-    # (14.4mm offset / ~75mm effective distance ≈ 0.19 rad per sensor, use 0.3 as conservative)
+    # (14.4mm offset / ~75mm effective distance ~= 0.19 rad per sensor, use 0.3 as conservative)
     heading_error_rad = offset_sensors * 0.3
     
     return heading_error_rad
@@ -236,14 +240,15 @@ def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, ca
       robot_map_x = target_waypoint.x - (cam_x_m * cos(bot_rad) - cam_y_m * sin(bot_rad))
       robot_map_y = target_waypoint.y - (cam_x_m * sin(bot_rad) + cam_y_m * cos(bot_rad))
 
-    cam_yaw_deg: marker heading in robot frame (CCW from robot +x, degrees).
-    This correction is applied full-strength (not blended), as it is intended to be used
-    when the robot is close to the target and camera confidence is high.
+    cam_yaw_deg: marker yaw in robot frame (CCW from robot +x, degrees).
+    Because the ArUco tag x-axis is aligned with the map x-axis the tag's
+    map-frame yaw is always 0, so:
 
-    Future map-frame yaw snapping (not done here):
-      marker_map_yaw_deg = math.degrees(bot_odom.bot_rad) + cam_yaw_deg
-      Snap marker_map_yaw_deg to nearest 90 deg, then update bot_rad accordingly.
-      This is deferred until robot map pose is reliably converged.
+      marker_map_yaw = bot_rad + cam_yaw_rad = 0  =>  bot_rad = -cam_yaw_rad
+
+    This works without snapping because any measured yaw is valid - the robot
+    is started with its heading aligned to the map +X axis, so the initial
+    bot_rad = 0.0 is consistent with this assumption.
     """
     cos_h = math.cos(bot_odom.bot_rad)
     sin_h = math.sin(bot_odom.bot_rad)
@@ -255,32 +260,48 @@ def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, ca
     bot_odom.botx = corrected_x
     bot_odom.boty = corrected_y
 
-    # (Heading correction from camera yaw is reserved for next phase.)
-    # TODO: snap marker_map_yaw to nearest 90 deg and correct bot_rad here.
+    # Heading correction: ArUco x-axis is aligned with map x-axis, so the
+    # marker's map-frame yaw is 0.  The camera reports cam_yaw_deg = marker
+    # yaw in the robot frame (CCW positive).  Therefore:
+    #   marker_map_yaw = bot_rad + cam_yaw_rad = 0
+    #   => bot_rad = -cam_yaw_rad
+    bot_odom.bot_rad = -math.radians(cam_yaw_deg)
 
 
 
 
 waypoints = []
 waypoints.append(Point(0.0, 0.0))
-waypoints.append(Point(24.0*0.0254, 0.0*0.0254))
-waypoints.append(Point(24.0*0.0254, -24.0*0.0254))
-waypoints.append(Point(40.0*0.0254, -24.0*0.0254))
-waypoints.append(Point(48.0*0.0254, 8.0*0.0254))
-waypoints.append(Point(80.0*0.0254, 8.0*0.0254))
-waypoints.append(Point(80.0*0.0254, -8.0*0.0254))
+waypoints.append(Point(-0.22, 0.42))
+waypoints.append(Point(0.0, 0.60))
+waypoints.append(Point(0.165, 0.91))
+#waypoints.append(Point(24.0*0.0254, 0.0*0.0254))
+#waypoints.append(Point(24.0*0.0254, -24.0*0.0254))
+#waypoints.append(Point(40.0*0.0254, -24.0*0.0254))
+#waypoints.append(Point(48.0*0.0254, 8.0*0.0254))
+#waypoints.append(Point(80.0*0.0254, 8.0*0.0254))
+#waypoints.append(Point(80.0*0.0254, -8.0*0.0254))
 
 waypoint_types = []
 waypoint_types.append("INTERMEDIATE")
-waypoint_types.append("INTERMEDIATE")
-waypoint_types.append("CIRCLE")
-waypoint_types.append("INTERMEDIATE")
 waypoint_types.append("CIRCLE")
 waypoint_types.append("INTERMEDIATE")
 waypoint_types.append("CIRCLE")
 
+waypoint_ids = []
+waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
+waypoint_ids.append(10)  # CIRCLE marker id
+waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
+waypoint_ids.append(11)  # CIRCLE marker id
+
 wp_ind = 1
 num_wp = len(waypoints)
+
+circle_dict = {}
+for i, wp_type in enumerate(waypoint_types):
+    if wp_type == "CIRCLE":
+        circle_dict[waypoint_ids[i]] = waypoints[i]
+        print("Circle waypoint: id=%d at (%.3f, %.3f)" % (waypoint_ids[i], waypoints[i].x, waypoints[i].y))
 
 line = [0, 0, 0, 0, 0]
 
@@ -311,7 +332,7 @@ spiral_forward_speed = 500  # forward speed during spiral (must overcome frictio
 
 # Heading alignment parameters
 heading_aligned = False
-heading_align_threshold_rad = 0.1  # ±0.1 rad (~6 degrees) considered aligned
+heading_align_threshold_rad = 0.1  # +/-0.1 rad (~6 degrees) considered aligned
 heading_align_turn_speed = 350  # turn speed for alignment (must overcome friction)
 
 # Initial heading calibration
@@ -328,12 +349,31 @@ while True:
     now = time.ticks_ms()
 
     # Poll camera UART receiver every loop iteration (non-blocking)
-    cam.update()
+    # Guard against rare UART/parse exceptions caused by noisy serial bytes.
+    try:
+        cam.update()
+    except Exception as exc:
+        print("cam.update exception:", type(exc).__name__)
+        sys.print_exception(exc)
+        try:
+            cam._buf = bytearray()  # reset parser buffer and continue loop
+        except Exception:
+            pass
     cam_pose = cam.get_nearest(fresh_only=True)
     cam_x_m    = cam_pose["x_m"]    if cam_pose else None
     cam_y_m    = cam_pose["y_m"]    if cam_pose else None
     cam_yaw_deg = cam_pose["yaw_deg"] if cam_pose else None
     cam_id     = cam_pose["id"]     if cam_pose else None
+
+    if cam_x_m is not None:
+        print("Camera sees marker %s at x=%.3f m, y=%.3f m, yaw=%.1f deg" %
+              (str(cam_id), cam_x_m, cam_y_m, cam_yaw_deg))
+        
+        if cam_id in circle_dict:
+            apply_camera_pose_correction(
+                bot_odom, circle_dict[cam_id],  # target waypoint for this marker ID
+                cam_x_m, cam_y_m, cam_yaw_deg
+            )
 
     if imu.gyro.data_ready() and (now - odom_time) > odom_period_msec:
         imu.gyro.read()
@@ -402,7 +442,7 @@ while True:
         left_speed = int(left_nom_speed * yaw_error_sign)
         right_speed = int(-right_nom_speed * yaw_error_sign)
         motors.set_speeds(left_speed, right_speed)
-        if abs(yaw_error_deg) < 15.0:  # Use 15° threshold to exit turn with hysteresis
+        if abs(yaw_error_deg) < 15.0:  # Use 15 deg threshold to exit turn with hysteresis
             motors.set_speeds(0, 0)
             state = state_stop
             next_state = state_track
@@ -485,7 +525,6 @@ while True:
                 # Reached home going backward - now start forward again
                 wp_ind = 1
                 wp_direction = 1
-        
         elif current_wp_type == "CIRCLE":
             # For circle waypoints: use camera ArUco detection to determine arrival.
             # The camera reports the marker (x_r, y_r) in the robot frame.
@@ -506,7 +545,7 @@ while True:
                                     and any(s < line_threshold for s in line))
 
             if cam_at_target or line_sensor_fallback:
-                # At the target — apply camera pose correction if available
+                # At the target - apply camera pose correction if available
                 if cam_at_target:
                     apply_camera_pose_correction(
                         bot_odom, waypoints[wp_ind],
@@ -540,7 +579,7 @@ while True:
                 motors.set_speeds(left_speed, right_speed)
 
             else:
-                # No camera detection near goal — slow forward search
+                # No camera detection near goal - slow forward search
                 search_forward_speed = 250
                 search_turn_speed = 60
                 left_speed = search_forward_speed + search_turn_speed

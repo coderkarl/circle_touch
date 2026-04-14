@@ -1,4 +1,4 @@
-# camera_pose_serial.py — MicroPython UART receiver for camera ArUco pose messages.
+# camera_pose_serial.py - MicroPython UART receiver for camera ArUco pose messages.
 #
 # Deploy this file to the Pololu 3pi+ 2040 alongside camera_circle_touch.py.
 #
@@ -10,7 +10,7 @@
 #   import camera_pose_serial
 #   cam = camera_pose_serial.CameraPoseSerial(uart_id=0, baudrate=115200, stale_ms=500)
 #
-#   # In the main 50ms loop — call every iteration:
+#   # In the main 50ms loop - call every iteration:
 #   cam.update()
 #
 #   # Check if any fresh detection is available:
@@ -39,7 +39,7 @@ class CameraPoseSerial:
         uart          : machine.UART instance
         stale_ms      : age in ms after which a detection is considered stale
         _buf          : byte accumulation buffer (bytearray)
-        _detections   : dict mapping marker_id (int) → detection dict
+        _detections   : dict mapping marker_id (int) -> detection dict
     """
 
     # Detection keys: id, ts_local_ms, ts_cam_ms, x_m, y_m, yaw_deg, dist_m, qual
@@ -66,7 +66,7 @@ class CameraPoseSerial:
         else:
             self.uart = machine.UART(uart_id, baudrate=baudrate)
 
-    # ── Public poll method ────────────────────────────────────────────────
+    # Public poll method
 
     def update(self):
         """
@@ -101,11 +101,21 @@ class CameraPoseSerial:
                 break
             line_bytes = self._buf[:idx]
             self._buf = self._buf[idx + 1:]
-            line = line_bytes.decode("ascii", "ignore").strip()
-            if line:
-                self._parse_line(line)
+            try:
+                line = line_bytes.decode("ascii", "ignore").strip()
+            except Exception:
+                self._parse_errors += 1
+                continue
 
-    # ── Query methods ─────────────────────────────────────────────────────
+            if not line:
+                continue
+
+            try:
+                self._parse_line(line)
+            except Exception:
+                self._parse_errors += 1
+
+    # Query methods
 
     def has_fresh(self):
         """Return True if at least one fresh (non-stale) detection exists."""
@@ -118,7 +128,7 @@ class CameraPoseSerial:
     def get_by_id(self, marker_id):
         """
         Return the latest detection dict for the given marker ID, or None.
-        Does not check freshness — use is_pose_fresh() separately.
+        Does not check freshness - use is_pose_fresh() separately.
         """
         return self._detections.get(int(marker_id), None)
 
@@ -175,7 +185,7 @@ class CameraPoseSerial:
         """Clear all stored detections."""
         self._detections.clear()
 
-    # ── Internal ─────────────────────────────────────────────────────────
+    # Internal
 
     def _parse_line(self, line):
         """Parse a single ASCII line and update internal state."""
