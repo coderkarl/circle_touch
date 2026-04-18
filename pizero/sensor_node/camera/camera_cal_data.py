@@ -4,7 +4,7 @@ camera_cal_data.py — Checkerboard calibration image capture for Pi Zero.
 
 Usage:
   Interactive (press Enter to capture, 'q' to quit):
-    python3 camera_cal_data.py --output-dir ./cal_images --width 1280 --height 720
+    python3 camera_cal_data.py --output-dir ./cal_images --width 1296 --height 972
 
   Timed (capture every N seconds for M images):
     python3 camera_cal_data.py --output-dir ./cal_images --interval 3.0 --count 25
@@ -12,7 +12,7 @@ Usage:
 After capture, copy images to a laptop and run camera_calibrate_offline.py.
 
 IMPORTANT: always calibrate at the same resolution you will use for ArUco detection.
-The default 1280x720 matches aruco_robot_pose.py defaults.
+The default 1296x972 matches aruco_robot_pose.py defaults.
 """
 import argparse
 import importlib
@@ -203,9 +203,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", default="./cal_images",
                         help="Directory to save calibration images (default: ./cal_images)")
-    parser.add_argument("--width", type=int, default=1280,
+    parser.add_argument("--width", type=int, default=1296,
                         help="Capture width in pixels — must match ArUco runtime resolution")
-    parser.add_argument("--height", type=int, default=720,
+    parser.add_argument("--height", type=int, default=972,
                         help="Capture height in pixels — must match ArUco runtime resolution")
     parser.add_argument("--warmup", type=float, default=2.0,
                         help="Camera warmup seconds (default: 2.0)")

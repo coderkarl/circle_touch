@@ -35,10 +35,10 @@ imu.enable_default()
 
 edition = "Hyper"
 if edition == "Hyper":
-    max_speed = 1300
-    left_nom_speed = 850
-    right_nom_speed = 850
-    turn_speed = 800
+    max_speed = 1200
+    left_nom_speed = 750
+    right_nom_speed = 750
+    turn_speed = 600
     turn_time = 125
     motors.flip_left(True)
     motors.flip_right(True)
@@ -265,6 +265,8 @@ def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, ca
     corrected_x = target_waypoint.x - (cam_x_m * cos_h - cam_y_m * sin_h)
     corrected_y = target_waypoint.y - (cam_x_m * sin_h + cam_y_m * cos_h)
 
+    # if abs(corrected_x - bot_odom.botx) > 0.1 or abs(corrected_y - bot_odom.boty) > 0.1:
+        # return
     bot_odom.botx = corrected_x
     bot_odom.boty = corrected_y
 
@@ -280,7 +282,7 @@ def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, ca
 
 waypoints = []
 waypoints.append(Point(0.0, 0.0))
-waypoints.append(Point(-0.22, 0.42))
+waypoints.append(Point(-0.21, 0.41))
 waypoints.append(Point(0.0, 0.60))
 waypoints.append(Point(0.165, 0.91))
 #waypoints.append(Point(24.0*0.0254, 0.0*0.0254))
@@ -347,7 +349,7 @@ heading_align_turn_speed = 350  # turn speed for alignment (must overcome fricti
 cam_slow_range_min_m = 0.10
 cam_slow_range_max_m = 0.30
 cam_slow_half_fov_deg = 20.0
-cam_slow_speed_scale = 0.45
+cam_slow_speed_scale = 0.75
 
 # Initial heading calibration
 initial_heading_calibrated = True  # Start as True - robot assumes it faces +X axis at home
@@ -381,12 +383,13 @@ while True:
     cam_y_m    = cam_pose["y_m"]    if cam_pose else None
     cam_yaw_deg = cam_pose["yaw_deg"] if cam_pose else None
     cam_id     = cam_pose["id"]     if cam_pose else None
+    cam_qual   = cam_pose["qual"]   if cam_pose else None
 
     if cam_x_m is not None:
-        print("Camera sees marker %s at x=%.3f m, y=%.3f m, yaw=%.1f deg" %
-              (str(cam_id), cam_x_m, cam_y_m, cam_yaw_deg))
+        print("Camera sees marker %s at x=%.3f m, y=%.3f m, yaw=%.1f deg, qual=%.1f" %
+              (str(cam_id), cam_x_m, cam_y_m, cam_yaw_deg, cam_qual))
         
-        if cam_id in circle_dict:
+        if (cam_qual >= 9) and (cam_id in circle_dict):
             apply_camera_pose_correction(
                 bot_odom, circle_dict[cam_id],  # target waypoint for this marker ID
                 cam_x_m, cam_y_m, cam_yaw_deg
@@ -670,11 +673,14 @@ while True:
         pi_str = "P" if pi_alive_now else " "
         display.text("w: "+str(int(yaw_rate_deg))+" "+cam_str+pi_str, 0, 40)
         display.show()
-        if cam_x_m is not None:
-            print("state %d, LSpd %d, RSpd %d, cam id=%s x=%.3f y=%.3f yaw=%.1f" %
-                  (state, left_speed, right_speed, str(cam_id),
-                   cam_x_m, cam_y_m, cam_yaw_deg))
-        else:
-            print("state %d, LSpd %d, RSpd %d, no cam, pi=%s" %
-                  (state, left_speed, right_speed, str(pi_alive_now)))
+        print("X: %.2f m, Y: %.2f m, Yaw: %.1f deg, w: %.1f deg/s, wp: %d/%d" %
+              (bot_odom.botx, bot_odom.boty, bot_odom.bot_rad*180.0/math.pi,
+               yaw_rate_deg, wp_ind, num_wp))
+        # if cam_x_m is not None:
+        #     print("state %d, LSpd %d, RSpd %d, cam id=%s x=%.3f y=%.3f yaw=%.1f" %
+        #           (state, left_speed, right_speed, str(cam_id),
+        #            cam_x_m, cam_y_m, cam_yaw_deg))
+        # else:
+        #     print("state %d, LSpd %d, RSpd %d, no cam, pi=%s" %
+        #           (state, left_speed, right_speed, str(pi_alive_now)))
         
