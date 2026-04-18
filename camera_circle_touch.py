@@ -75,8 +75,6 @@ state_track = 1
 state_rev = -1
 state_turn = 2
 state_seek = 3
-state_spiral = 4
-state_align_heading = 5
 
 state = state_track
 next_state = state_track
@@ -97,144 +95,6 @@ class Point():
     
     def distance(self):
         return (self.x * self.x + self.y * self.y)**0.5
-
-
-def detect_cross_pattern(line_values, threshold=400):
-    """
-    Detect if robot is crossing a black cross pattern using line sensors.
-    
-    line_values: array of 5 sensor readings from left to right
-    Returns: (cross_detected, lateral_error_m, cross_quality)
-    
-    The cross consists of vertical (Y-axis) and horizontal (X-axis) black lines
-    at the target location. When the robot crosses the center, multiple sensors see black.
-    
-    Raw sensor values: 0-1023 (0=dark, 1023=light)
-    threshold: values below this are considered black
-    
-    Reference from 3pi+ specs:
-    - 5 line sensors spaced across robot width
-    - Typical sensor spacing: ~13-16mm apart on 3pi+
-    - Total width coverage: ~52-64mm (about 2.1-2.5 inches)
-    """
-    # Count how many sensors see black (low value = dark)
-    black_sensors = [1 if v < threshold else 0 for v in line_values]
-    black_count = sum(black_sensors)
-    
-    # Cross is detected if multiple sensors see black (indicates intersection)
-    if black_count < cross_detect_threshold:
-        return False, 0.0, 0
-    
-    # Calculate center of mass of black sensors to determine position error
-    # Sensors indexed 0-4 from left to right, with sensor 2 being center
-    if black_count == 0:
-        return False, 0.0, 0
-    
-    center_of_black = sum(i * black_sensors[i] for i in range(5)) / black_count
-    center_position = 2.0  # ideal center is at index 2
-    
-    # Sensor spacing on 3pi+: approximately 14.4mm between sensors
-    # Total span: ~57.6mm for 5 sensors
-    # 3pi+ body width is ~32mm, sensors overhang
-    sensor_spacing_m = 0.0144  # meters between sensors
-    
-    # Lateral offset from center in meters
-    lateral_error_m = (center_of_black - center_position) * sensor_spacing_m
-    
-    # Quality metric: how clear the cross detection is
-    # Based on how many sensors see black and how dark they are
-    cross_quality = black_count
-    
-    return True, lateral_error_m, cross_quality
-
-
-def detect_extended_x_axis_line(line_values, threshold=400):
-    """
-    Detect the extended +X axis line of the cross that extends beyond the circle.
-    This line is perpendicular to the robot's forward direction.
-    
-    Returns: (line_detected, line_position, line_quality)
-    line_position: -1 = left of center, 0 = centered, +1 = right of center
-    """
-    black_sensors = [1 if v < threshold else 0 for v in line_values]
-    black_count = sum(black_sensors)
-    
-    if black_count < 1:
-        return False, 0, 0
-    
-    # For the extended X-axis line, we care about the width and position
-    # A single continuous black line across multiple sensors indicates the X-axis
-    center_of_black = sum(i * black_sensors[i] for i in range(5)) / black_count
-    
-    # Determine if line is off to left (-1) or right (+1)
-    if center_of_black < 2.0:
-        line_position = -1  # line is left of center
-    elif center_of_black > 2.0:
-        line_position = 1   # line is right of center
-    else:
-        line_position = 0   # line is centered
-    
-    return True, line_position, black_count
-
-
-def estimate_heading_error_from_cross(line_values, center_y_detected, threshold=400):
-    """
-    Estimate heading error by analyzing the cross pattern.
-    
-    If the vertical arm (Y-axis) of the cross is detected off-center,
-    the robot's heading needs adjustment.
-    
-    Returns: heading_error_rad (estimated in radians)
-    """
-    black_sensors = [1 if v < threshold else 0 for v in line_values]
-    black_count = sum(black_sensors)
-    
-    if black_count < 2:
-        return 0.0
-    
-    center_of_black = sum(i * black_sensors[i] for i in range(5)) / black_count
-    center_position = 2.0
-    
-    # If the detected pattern is offset, estimate heading error
-    # Each sensor offset (~14.4mm) at ~50mm distance = ~16 degrees rotation needed
-    offset_sensors = center_of_black - center_position
-    
-    # Heading error estimate: offset_sensors * ~0.3 radians per sensor
-    # (14.4mm offset / ~75mm effective distance ~= 0.19 rad per sensor, use 0.3 as conservative)
-    heading_error_rad = offset_sensors * 0.3
-    
-    return heading_error_rad
-
-
-def correct_position_at_target(bot_odom, target_waypoint, lateral_error_m):
-    """
-    When a cross is detected, correct the odometry to match the target.
-    This acts as an absolute position correction.
-    
-    bot_odom: odometry object to update
-    target_waypoint: target Point where the cross was detected
-    lateral_error_m: lateral offset from center line in meters
-    """
-    # Update position to target waypoint
-    bot_odom.botx = target_waypoint.x
-    bot_odom.boty = target_waypoint.y
-    
-    # The cross is aligned with global axes, so heading should be close to 0, 90, 180, or 270 degrees
-    # The lateral error from the sensors tells us if we're aligned or slightly off
-    # For now, we keep the measured heading as-is since the cross constrains position
-    # In future, could refine heading based on which axis the cross was detected on
-    pass
-
-
-def correct_heading_at_target(bot_odom, target_waypoint, heading_error_rad):
-    """
-    Correct the robot's heading estimate when a target cross is detected.
-    Uses the cross pattern alignment to refine heading.
-    
-    This is called before position correction to ensure we have accurate heading.
-    """
-    # Apply the measured heading error
-    bot_odom.bot_rad = bot_odom.bot_rad + heading_error_rad * 0.1  # Apply 10% correction gradually
 
 
 def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, cam_yaw_deg):
@@ -315,45 +175,15 @@ for i, wp_type in enumerate(waypoint_types):
 
 line = [0, 0, 0, 0, 0]
 
-# Target circle and cross dimensions (in meters)
-target_circle_radius = 6 * 0.0254 / 2.0  # 6 inch diameter
-cross_arm_length = target_circle_radius  # extends to circle perimeter
-cross_line_thickness = 0.75 * 0.0254  # 0.75 inch (actual thickness)
-extended_x_arm_length = 2 * 0.0254  # ~2 inches beyond circle
-
-# Line sensor thresholds for detecting black
+# Line sensor threshold for black fallback at target
 # Raw sensor values: 0 (dark) to 1023 (light)
-# Black cross lines should read significantly lower than white background
 line_threshold = 400  # values below this are considered black
-cross_detect_threshold = 2  # minimum 2 sensors must see black to detect cross
-
-# Cross detection state
-cross_detected = False
-cross_detect_time = 0
-cross_detect_timeout_ms = 500  # timeout for cross detection state
-
-# Spiral search parameters
-spiral_search_active = False
-spiral_start_time = 0
-spiral_radius_m = 0.0  # starts at 0, increases
-spiral_radius_rate = 0.15  # meters per second spiral expansion
-spiral_turn_speed = 400  # turn speed for searching
-spiral_forward_speed = 500  # forward speed during spiral (must overcome friction)
-
-# Heading alignment parameters
-heading_aligned = False
-heading_align_threshold_rad = 0.1  # +/-0.1 rad (~6 degrees) considered aligned
-heading_align_turn_speed = 350  # turn speed for alignment (must overcome friction)
 
 # Camera-assisted speed reduction zone (to reduce motion blur while acquiring tags)
 cam_slow_range_min_m = 0.10
 cam_slow_range_max_m = 0.30
 cam_slow_half_fov_deg = 20.0
 cam_slow_speed_scale = 0.75
-
-# Initial heading calibration
-initial_heading_calibrated = True  # Start as True - robot assumes it faces +X axis at home
-initial_heading_estimate = 0.0  # Will be refined if cross detected at home
 
 # Waypoint navigation direction: forward = 1, backward = -1
 wp_direction = 1  # Start going forward through waypoints
@@ -405,11 +235,6 @@ while True:
 
         line = line_sensors.read()
         line_sensors.start_read()
-
-        # Legacy cross detection variables (kept for fallback; not actively used)
-        cross_found = False
-        lateral_error_m = 0.0
-        heading_error = 0.0
     
     # Desired heading toward waypoint
     wp = waypoints[wp_ind]
@@ -417,9 +242,7 @@ while True:
     wp_diff = wp - bxy
     dist_to_goal = wp_diff.distance()
     
-    near_goal = False
-    if dist_to_goal < 0.05:  # 5cm threshold to allow cross detection before stopping
-        near_goal = True
+    near_goal = dist_to_goal < 0.05
     
     des_heading = wp_diff.angle_deg()
     yaw_error_deg = bot_odom.bot_rad*180.0 / math.pi - des_heading
@@ -462,7 +285,7 @@ while True:
     # Debug output every 2 seconds
     if (now - disp_time) > 2000:
         disp_time = now
-        state_names = ["STOP", "TRACK", "REV", "TURN", "SPIRAL", "ALIGN"]
+        state_names = ["STOP", "TRACK", "REV", "TURN"]
         print("State: %s, wp: %d, dist: %.3f, near: %d, yaw_err: %.1f, L:%d R:%d" % 
               (state_names[state], wp_ind, dist_to_goal, near_goal, yaw_error_deg, left_speed, right_speed))
     left_speed = 0
@@ -498,59 +321,6 @@ while True:
             motors.set_speeds(0, 0)
             state = state_stop
             next_state = state_track
-    elif state == state_spiral:
-        # Spiral search: expand outward while turning to find the target circle
-        if not spiral_search_active:
-            spiral_search_active = True
-            spiral_start_time = now
-            spiral_radius_m = 0.0
-        
-        # Calculate time in spiral
-        spiral_time_s = (now - spiral_start_time) / 1000.0
-        
-        # Expand radius and turn
-        spiral_radius_m = spiral_time_s * spiral_radius_rate
-        
-        # Spiral motion: forward + turn
-        # Forward speed starts at 50% to overcome friction, ramps to 100% over 3 seconds
-        forward_speed = int(spiral_forward_speed * max(0.5, min(1.0, 0.5 + spiral_time_s / 6.0)))
-        turn_speed = spiral_turn_speed
-        
-        left_speed = forward_speed + turn_speed
-        right_speed = forward_speed - turn_speed
-        motors.set_speeds(left_speed, right_speed)
-        
-        # Exit spiral if cross is found
-        if cross_found:
-            motors.set_speeds(0, 0)
-            spiral_search_active = False
-            state = state_stop
-            next_state = state_align_heading
-        
-        # Exit spiral after 15 seconds (3 meter radius)
-        if spiral_time_s > 15.0:
-            motors.set_speeds(0, 0)
-            spiral_search_active = False
-            state = state_stop
-            next_state = state_track
-    
-    elif state == state_align_heading:
-        # Slowly turn to align with the cross
-        # Use heading error from cross detection to guide rotation
-        if abs(heading_error) < heading_align_threshold_rad:
-            # Heading is aligned
-            motors.set_speeds(0, 0)
-            state = state_stop
-            next_state = state_track
-            correct_heading_at_target(bot_odom, waypoints[wp_ind], heading_error)
-            correct_position_at_target(bot_odom, waypoints[wp_ind], lateral_error_m)
-            heading_aligned = True
-        else:
-            # Turn slowly to reduce heading error
-            turn_direction = 1.0 if heading_error > 0 else -1.0
-            left_speed = int(heading_align_turn_speed * turn_direction)
-            right_speed = int(-heading_align_turn_speed * turn_direction)
-            motors.set_speeds(left_speed, right_speed)
     
     # Handle arrival at waypoint
     if near_goal and wp_ind != last_processed_wp:
@@ -596,14 +366,7 @@ while True:
             line_sensor_fallback = (cam_x_m is None
                                     and any(s < line_threshold for s in line))
 
-            if cam_at_target or line_sensor_fallback:
-                # At the target - apply camera pose correction if available
-                if cam_at_target:
-                    apply_camera_pose_correction(
-                        bot_odom, waypoints[wp_ind],
-                        cam_x_m, cam_y_m, cam_yaw_deg
-                    )
-
+            if line_sensor_fallback:
                 motors.set_speeds(0, 0)
                 for k in range(4):
                     buzzer.play("a32")
@@ -618,18 +381,6 @@ while True:
                 elif wp_direction == -1 and wp_ind < 0:
                     wp_ind = 1
                     wp_direction = 1
-
-            elif cam_x_m is not None:
-                # Camera sees the marker but robot is not close enough yet.
-                # Guide the robot toward the marker: steer to reduce y_r, drive forward.
-                cam_steer_gain = 300.0  # motor counts per meter of lateral error
-                steer_cmd = int(cam_steer_gain * cam_y_m)
-                steer_cmd = max(-200, min(200, steer_cmd))
-                approach_speed = 250
-                left_speed = approach_speed - steer_cmd
-                right_speed = approach_speed + steer_cmd
-                motors.set_speeds(left_speed, right_speed)
-
             else:
                 # No camera detection near goal - slow forward search
                 search_forward_speed = 250
