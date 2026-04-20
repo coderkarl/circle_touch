@@ -22,7 +22,7 @@ CAMERA_INPUT_ENABLED = True
 line_sensors = robot.LineSensors()
 encoders = robot.Encoders()
 motors = robot.Motors()
-bot_odom = odom.Odom()
+bot_odom = odom.SpeedControlledOdom(motors)
 bot_odom.bot_rad = math.pi/2  # Start with heading aligned to +X axis of the map
 bump_sensors = robot.BumpSensors()
 buzzer = robot.Buzzer()
@@ -36,12 +36,27 @@ imu.enable_default()
 edition = "Hyper"
 if edition == "Hyper":
     max_speed = 1200
-    left_nom_speed = 750
-    right_nom_speed = 750
-    turn_speed = 600
+    cruise_speed_mps = 0.20
+    turn_speed_mps = 0.14
+    heading_correction_mps = 0.06
+    search_forward_mps = 0.08
+    search_turn_mps = 0.03
+    max_wheel_speed_mps = 0.25
+    max_accel_mps2 = 0.35
+    speed_measure_window_s = 0.10
     turn_time = 125
     motors.flip_left(True)
     motors.flip_right(True)
+
+bot_odom.configure_speed_controller(
+    kp=1700.0,
+    ki=450.0,
+    max_motor_cmd=max_speed,
+    max_wheel_speed_mps=max_wheel_speed_mps,
+    max_int_term_cmd=350.0,
+    max_accel_mps2=max_accel_mps2,
+    speed_measure_window_s=speed_measure_window_s,
+)
 
 display.fill(0)
 display.show()
@@ -97,6 +112,14 @@ class Point():
         return (self.x * self.x + self.y * self.y)**0.5
 
 
+def wrap_angle_deg(angle_deg):
+    while angle_deg <= -180.0:
+        angle_deg += 360.0
+    while angle_deg > 180.0:
+        angle_deg -= 360.0
+    return angle_deg
+
+
 def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, cam_yaw_deg):
     """
     Correct robot odometry using camera-measured ArUco marker pose in the robot frame.
@@ -141,28 +164,37 @@ def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, ca
 
 
 waypoints = []
-waypoints.append(Point(0.0, 0.0))
-waypoints.append(Point(-0.21, 0.41))
-waypoints.append(Point(0.0, 0.60))
-waypoints.append(Point(0.165, 0.91))
-#waypoints.append(Point(24.0*0.0254, 0.0*0.0254))
-#waypoints.append(Point(24.0*0.0254, -24.0*0.0254))
-#waypoints.append(Point(40.0*0.0254, -24.0*0.0254))
-#waypoints.append(Point(48.0*0.0254, 8.0*0.0254))
-#waypoints.append(Point(80.0*0.0254, 8.0*0.0254))
-#waypoints.append(Point(80.0*0.0254, -8.0*0.0254))
-
 waypoint_types = []
-waypoint_types.append("INTERMEDIATE")
-waypoint_types.append("CIRCLE")
-waypoint_types.append("INTERMEDIATE")
-waypoint_types.append("CIRCLE")
-
 waypoint_ids = []
-waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
-waypoint_ids.append(10)  # CIRCLE marker id
-waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
-waypoint_ids.append(11)  # CIRCLE marker id
+
+square_test = False  # If True, use simple square waypoints without camera targets for testing
+
+if square_test:
+    square_corners = [
+        Point(0.0, 0.0),
+        Point(0.0, 0.40),
+        Point(0.40, 0.40),
+        Point(0.40, 0.0)
+    ]
+    for corner in square_corners:
+        waypoints.append(corner)
+        waypoint_types.append("INTERMEDIATE")
+        waypoint_ids.append(-1)
+else:
+    waypoints.append(Point(0.0, 0.0))
+    waypoints.append(Point(-0.21, 0.41))
+    waypoints.append(Point(0.0, 0.60))
+    waypoints.append(Point(0.165, 0.91))
+
+    waypoint_types.append("INTERMEDIATE")
+    waypoint_types.append("CIRCLE")
+    waypoint_types.append("INTERMEDIATE")
+    waypoint_types.append("CIRCLE")
+
+    waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
+    waypoint_ids.append(10)  # CIRCLE marker id
+    waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
+    waypoint_ids.append(11)  # CIRCLE marker id
 
 wp_ind = 1
 num_wp = len(waypoints)
@@ -225,13 +257,14 @@ while True:
                 cam_x_m, cam_y_m, cam_yaw_deg
             )
 
-    if imu.gyro.data_ready() and (now - odom_time) > odom_period_msec:
-        imu.gyro.read()
-        yaw_rate_deg = imu.gyro.last_reading_dps[2]  # degrees per second
-        #print("%.2f, %.2f" % (now, yaw_rate_deg))
+    if (now - odom_time) > odom_period_msec:
+        if imu.gyro.data_ready():
+            imu.gyro.read()
+            yaw_rate_deg = imu.gyro.last_reading_dps[2]  # degrees per second
+        dt_s = time.ticks_diff(now, odom_time) / 1000.0
         enc = encoders.get_counts()
         odom_time = now
-        bot_odom.update_odom(enc[0], enc[1], yaw_rate_deg)
+        bot_odom.update_odom_and_control(enc[0], enc[1], dt_s)
 
         line = line_sensors.read()
         line_sensors.start_read()
@@ -245,7 +278,8 @@ while True:
     near_goal = dist_to_goal < 0.05
     
     des_heading = wp_diff.angle_deg()
-    yaw_error_deg = bot_odom.bot_rad*180.0 / math.pi - des_heading
+    bot_heading_deg = bot_odom.bot_rad * 180.0 / math.pi
+    yaw_error_deg = wrap_angle_deg(bot_heading_deg - des_heading)
     yaw_error_sign = 0.0
     if abs(yaw_error_deg) > 1.0:
         yaw_error_sign = yaw_error_deg / abs(yaw_error_deg)
@@ -279,46 +313,50 @@ while True:
         )
 
     track_speed_scale = cam_slow_speed_scale if pred_cam_in_slow_zone else 1.0
-    left_track_speed = int(left_nom_speed * track_speed_scale)
-    right_track_speed = int(right_nom_speed * track_speed_scale)
+    left_track_mps = cruise_speed_mps * track_speed_scale
+    right_track_mps = cruise_speed_mps * track_speed_scale
+
+    left_target_mps = 0.0
+    right_target_mps = 0.0
     
     # Debug output every 2 seconds
     if (now - disp_time) > 2000:
         disp_time = now
-        state_names = ["STOP", "TRACK", "REV", "TURN"]
-        print("State: %s, wp: %d, dist: %.3f, near: %d, yaw_err: %.1f, L:%d R:%d" % 
-              (state_names[state], wp_ind, dist_to_goal, near_goal, yaw_error_deg, left_speed, right_speed))
-    left_speed = 0
-    right_speed = 0
+        state_names = {
+            state_stop: "STOP",
+            state_track: "TRACK",
+            state_rev: "REV",
+            state_turn: "TURN",
+            state_seek: "SEEK",
+        }
+        print("State: %s, wp: %d, dist: %.3f, near: %d, yaw_err: %.1f, tgtL:%.2f tgtR:%.2f, cmdL:%d cmdR:%d" %
+              (state_names.get(state, "?"), wp_ind, dist_to_goal, near_goal, yaw_error_deg,
+               left_target_mps, right_target_mps, bot_odom.last_left_cmd, bot_odom.last_right_cmd))
     
     if state == state_stop:
-        motors.set_speeds(0,0)
-        time.sleep_ms(200)  # Reduced from 500ms - gives odometry time to update without long pause
+        bot_odom.stop(immediate=True)
         state = next_state
     elif state == state_track:    
         if abs(yaw_error_deg) < 10.0:
             # Heading is good - move forward
-            motors.set_speeds(left_track_speed, right_track_speed)
-            left_speed = left_track_speed
-            right_speed = right_track_speed
+            left_target_mps = left_track_mps
+            right_target_mps = right_track_mps
         elif abs(yaw_error_deg) < 30.0:
             # Heading is off but not too much - move forward with correction
-            offset_cmd = 100.0 * yaw_error_deg / 30.0
-            left_speed = int(left_track_speed + offset_cmd)
-            right_speed = int(right_track_speed - offset_cmd)
-            motors.set_speeds(left_speed, right_speed)
+            offset_mps = heading_correction_mps * yaw_error_deg / 30.0
+            left_target_mps = left_track_mps + offset_mps
+            right_target_mps = right_track_mps - offset_mps
         else:
             # Heading is way off - stop and turn
-            motors.set_speeds(0, 0)
+            bot_odom.set_target_speeds_mps(0.0, 0.0)
             state = state_stop
             next_state = state_turn
     elif state == state_turn:
         # Turn in place until heading is better
-        left_speed = int(left_nom_speed * yaw_error_sign)
-        right_speed = int(-right_nom_speed * yaw_error_sign)
-        motors.set_speeds(left_speed, right_speed)
+        left_target_mps = turn_speed_mps * yaw_error_sign
+        right_target_mps = -turn_speed_mps * yaw_error_sign
         if abs(yaw_error_deg) < 15.0:  # Use 15 deg threshold to exit turn with hysteresis
-            motors.set_speeds(0, 0)
+            bot_odom.set_target_speeds_mps(0.0, 0.0)
             state = state_stop
             next_state = state_track
     
@@ -330,7 +368,9 @@ while True:
         if current_wp_type == "INTERMEDIATE":
             # For intermediate waypoints: trust dead reckoning, don't search for cross
             # Just mark as reached and move to next waypoint
-            motors.set_speeds(0, 0)
+            bot_odom.stop(immediate=True)
+            left_target_mps = 0.0
+            right_target_mps = 0.0
             for k in range(2):
                 buzzer.play("a32")
                 time.sleep_ms(100)
@@ -347,6 +387,9 @@ while True:
                 # Reached home going backward - now start forward again
                 wp_ind = 1
                 wp_direction = 1
+
+            state = state_stop
+            next_state = state_track
         elif current_wp_type == "CIRCLE":
             # For circle waypoints: use camera ArUco detection to determine arrival.
             # The camera reports the marker (x_r, y_r) in the robot frame.
@@ -366,8 +409,10 @@ while True:
             line_sensor_fallback = (cam_x_m is None
                                     and any(s < line_threshold for s in line))
 
-            if line_sensor_fallback:
-                motors.set_speeds(0, 0)
+            if cam_at_target or line_sensor_fallback:
+                bot_odom.stop(immediate=True)
+                left_target_mps = 0.0
+                right_target_mps = 0.0
                 for k in range(4):
                     buzzer.play("a32")
                     time.sleep_ms(100)
@@ -381,18 +426,20 @@ while True:
                 elif wp_direction == -1 and wp_ind < 0:
                     wp_ind = 1
                     wp_direction = 1
+
+                state = state_stop
+                next_state = state_track
             else:
                 # No camera detection near goal - slow forward search
-                search_forward_speed = 250
-                search_turn_speed = 60
-                left_speed = search_forward_speed + search_turn_speed
-                right_speed = search_forward_speed - search_turn_speed
-                motors.set_speeds(left_speed, right_speed)
+                left_target_mps = search_forward_mps + search_turn_mps
+                right_target_mps = search_forward_mps - search_turn_mps
+
+    bot_odom.set_target_speeds_mps(left_target_mps, right_target_mps)
     
 
     if False and (bump_sensors.left_is_pressed() or bump_sensors.right_is_pressed()):
         yellow_led.on()
-        motors.set_speeds(0, 0)
+        bot_odom.stop()
         buzzer.play("a32")
         display.fill(0)
         display.text("Left", 0, 0)
