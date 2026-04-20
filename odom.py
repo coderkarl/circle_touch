@@ -6,6 +6,8 @@ import time
 
 class Odom():
     def __init__(self):
+        self.prev_msec = time.ticks_ms()
+
         self.bot_rad = 0
         self.botx = 0.0
         self.boty = 0.0
@@ -15,40 +17,97 @@ class Odom():
         self.track_width = 3.4 * 0.0254  # 3.4 inches wheel-to-wheel distance, converted to meters
         self.prev_enc_left = 0
         self.prev_enc_right = 0
+
+        self.yaw_rate_bias_dps = 0.0
+        self.stopped_yaw_rate_sum_deg = 0.0
+        self.stopped_sample_count = 0
+        self.stopped_time_s = 0.0
+        self.min_bias_update_stop_s = 0.5
+        self.yaw_rate_bias_weight_s = 5.0
+
+    def _compute_dt_s(self):
+        now_msec = time.ticks_ms()
+        dt_s = time.ticks_diff(now_msec, self.prev_msec) / 1000.0
+        self.prev_msec = now_msec
+        if dt_s <= 0.0:
+            dt_s = 1e-3
+        return dt_s
+
+    def _reset_stopped_yaw_accumulator(self):
+        self.stopped_yaw_rate_sum_deg = 0.0
+        self.stopped_sample_count = 0
+        self.stopped_time_s = 0.0
+
+    def _accumulate_stopped_yaw_rate(self, yaw_rate_deg, dt_s):
+        self.stopped_yaw_rate_sum_deg += yaw_rate_deg
+        self.stopped_sample_count += 1
+        self.stopped_time_s += dt_s
+
+    def _update_yaw_rate_bias_from_stop(self):
+        if self.stopped_sample_count <= 0:
+            self._reset_stopped_yaw_accumulator()
+            return
+
+        if self.stopped_time_s > self.min_bias_update_stop_s:
+            stopped_avg_yaw_rate_dps = self.stopped_yaw_rate_sum_deg / self.stopped_sample_count
+            old_weight = self.yaw_rate_bias_weight_s
+            new_weight = self.stopped_time_s
+            total_weight = old_weight + new_weight
+            if total_weight <= 0.0:
+                self.yaw_rate_bias_dps = stopped_avg_yaw_rate_dps
+            else:
+                self.yaw_rate_bias_dps = (
+                    (self.yaw_rate_bias_dps * old_weight) + (stopped_avg_yaw_rate_dps * new_weight)
+                ) / total_weight
+
+        self._reset_stopped_yaw_accumulator()
+
+    def _update_pose_from_counts_and_yaw(self, dleft, dright, yaw_rate_deg, dt_s):
+        dmeters = (dleft + dright) / 2.0 / self.counts_per_meter
+        self.dist += dmeters
+
+        dleft_m = dleft / self.counts_per_meter
+        dright_m = dright / self.counts_per_meter
+        dtheta_rad_enc = (dright_m - dleft_m) / self.track_width
+
+        is_stopped = (dleft == 0 and dright == 0)
+        if is_stopped:
+            self._accumulate_stopped_yaw_rate(yaw_rate_deg, dt_s)
+            dtheta_rad = 0.0
+        else:
+            self._update_yaw_rate_bias_from_stop()
+            dtheta_rad = math.radians(yaw_rate_deg - self.yaw_rate_bias_dps) * dt_s
+
+            dtheta_ref = abs(dtheta_rad_enc)
+            if dtheta_ref < 1e-6:
+                dtheta_ref = 1e-6
+            if abs(dtheta_rad - dtheta_rad_enc) > (0.2 * dtheta_ref):
+                dtheta_rad = dtheta_rad_enc
+
+        self.bot_rad = self.bot_rad + dtheta_rad
+
+        dx = dmeters * math.cos(self.bot_rad)
+        dy = dmeters * math.sin(self.bot_rad)
+        self.botx = self.botx + dx
+        self.boty = self.boty + dy
     
     def update_odom(self, enc_left, enc_right, yaw_rate_deg):
         """
-        Update odometry using encoder-based differential drive kinematics.
+        Update odometry using encoder distance and gyro yaw rate.
         
         For differential drive:
         - Distance: dmeters = (dLeft + dRight) / 2 / counts_per_meter
-        - Heading: dTheta = (dRight - dLeft) / track_width
+        - Heading: dTheta = (yaw_rate_deg - yaw_rate_bias_dps) * dt
         - Position: integrate distance at current heading
         """
+        dt_s = self._compute_dt_s()
         
         dleft = enc_left - self.prev_enc_left
         dright = enc_right - self.prev_enc_right
         self.prev_enc_left = enc_left
         self.prev_enc_right = enc_right
-        
-        # Distance traveled using encoder deltas (same formula as before)
-        dmeters = (dleft + dright) / 2.0 / self.counts_per_meter
-        self.dist += dmeters
-        
-        # Change in heading from differential motion (encoder-based, no gyro)
-        # Convert encoder deltas to meters, then compute rotation
-        dleft_m = dleft / self.counts_per_meter
-        dright_m = dright / self.counts_per_meter
-        dtheta_rad = (dright_m - dleft_m) / self.track_width
 
-        # Update heading
-        self.bot_rad = self.bot_rad + dtheta_rad
-        
-        # Update position based on average distance and current heading
-        dx = dmeters * math.cos(self.bot_rad)
-        dy = dmeters * math.sin(self.bot_rad)
-        self.botx = self.botx + dx
-        self.boty = self.boty + dy
+        self._update_pose_from_counts_and_yaw(dleft, dright, yaw_rate_deg, dt_s)
 
 
 class SpeedControlledOdom(Odom):
@@ -255,24 +314,13 @@ class SpeedControlledOdom(Odom):
             self.motors.set_speeds(left_cmd, right_cmd)
 
     def update_odom(self, enc_left, enc_right, yaw_rate_deg):
-        del yaw_rate_deg
+        dt_s = self._compute_dt_s()
         dleft = enc_left - self.prev_enc_left
         dright = enc_right - self.prev_enc_right
         self.prev_enc_left = enc_left
         self.prev_enc_right = enc_right
 
-        dmeters = (dleft + dright) / 2.0 / self.counts_per_meter
-        self.dist += dmeters
-
-        dleft_m = dleft / self.counts_per_meter
-        dright_m = dright / self.counts_per_meter
-        dtheta_rad = (dright_m - dleft_m) / self.track_width
-        self.bot_rad = self.bot_rad + dtheta_rad
-
-        dx = dmeters * math.cos(self.bot_rad)
-        dy = dmeters * math.sin(self.bot_rad)
-        self.botx = self.botx + dx
-        self.boty = self.boty + dy
+        self._update_pose_from_counts_and_yaw(dleft, dright, yaw_rate_deg, dt_s)
 
     def update_odom_and_control(self, enc_left, enc_right, dt_s):
         self.update(enc_left, enc_right, dt_s)
