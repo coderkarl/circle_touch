@@ -18,12 +18,13 @@ class Odom():
         self.prev_enc_left = 0
         self.prev_enc_right = 0
 
+        self.gyro_factor = 0.95
         self.yaw_rate_bias_dps = 0.0
         self.stopped_yaw_rate_sum_deg = 0.0
         self.stopped_sample_count = 0
         self.stopped_time_s = 0.0
-        self.min_bias_update_stop_s = 0.5
-        self.yaw_rate_bias_weight_s = 5.0
+        self.min_bias_update_stop_s = 2.0
+        self.yaw_rate_bias_weight_s = 2.0
 
     def _compute_dt_s(self):
         now_msec = time.ticks_ms()
@@ -76,13 +77,14 @@ class Odom():
             dtheta_rad = 0.0
         else:
             self._update_yaw_rate_bias_from_stop()
-            dtheta_rad = math.radians(yaw_rate_deg - self.yaw_rate_bias_dps) * dt_s
+            dtheta_rad_gyro = math.radians(yaw_rate_deg*self.gyro_factor - self.yaw_rate_bias_dps) * dt_s
+            dtheta_rad = dtheta_rad_gyro*0.5 + dtheta_rad_enc*0.5
 
-            dtheta_ref = abs(dtheta_rad_enc)
-            if dtheta_ref < 1e-6:
-                dtheta_ref = 1e-6
-            if abs(dtheta_rad - dtheta_rad_enc) > (0.2 * dtheta_ref):
-                dtheta_rad = dtheta_rad_enc
+            # dtheta_ref = abs(dtheta_rad_enc)
+            # if dtheta_ref < 1e-6:
+            #     dtheta_ref = 1e-6
+            # if abs(dtheta_rad - dtheta_rad_enc) > (0.2 * dtheta_ref):
+            #     dtheta_rad = dtheta_rad_enc
 
         self.bot_rad = self.bot_rad + dtheta_rad
 

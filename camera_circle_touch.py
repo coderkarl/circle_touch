@@ -142,8 +142,8 @@ def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, ca
     is started with its heading aligned to the map +X axis, so the initial
     bot_rad = 0.0 is consistent with this assumption.
     """
-    max_pose_update_dist_m = 0.25
-    max_pose_update_heading_deg = 20.0
+    max_pose_update_dist_m = 1.25
+    max_pose_update_heading_deg = 120.0
 
     measured_bot_heading_deg = wrap_angle_deg(marker_map_yaw_deg - cam_yaw_deg)
     measured_bot_heading_rad = math.radians(measured_bot_heading_deg)
@@ -206,17 +206,23 @@ if square_test:
         waypoint_ids.append(-1)
 else:
     waypoints.append(Point(0.0, 0.0))
-    waypoints.append(Point(-0.21, 0.41))
-    waypoints.append(Point(0.0, 0.60))
-    waypoints.append(Point(0.165, 0.91))
+    waypoints.append(Point(0.0, 0.6)) #circle
+    waypoints.append(Point(-0.3, 0.6))
+    waypoints.append(Point(-0.45, 0.1))
+    waypoints.append(Point(-0.59, 0.3))
+    waypoints.append(Point(-0.59, 0.6)) #circle
 
     waypoint_types.append("INTERMEDIATE")
     waypoint_types.append("CIRCLE")
+    waypoint_types.append("INTERMEDIATE")
+    waypoint_types.append("INTERMEDIATE")
     waypoint_types.append("INTERMEDIATE")
     waypoint_types.append("CIRCLE")
 
     waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
     waypoint_ids.append(10)  # CIRCLE marker id
+    waypoint_ids.append(-1)
+    waypoint_ids.append(-1)
     waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
     waypoint_ids.append(11)  # CIRCLE marker id
 
@@ -251,6 +257,13 @@ cam_slow_speed_scale = 0.75
 wp_direction = 1  # Start going forward through waypoints
 last_processed_wp = -1  # Track which waypoint was just processed to avoid double-processing
 
+# Distance and cumulative absolute angle since last camera pose correction.
+# Initialized large so the first tag detection is immediately eligible.
+distance_since_tag = 999.0
+angle_since_tag_deg = 999.0
+_prev_odom_dist_tag = bot_odom.dist
+_prev_bot_rad_tag = bot_odom.bot_rad
+
 while True:
     #motors.set_speeds(max_speed, max_speed)
     bump_sensors.read()
@@ -280,23 +293,64 @@ while True:
     if cam_x_m is not None:
         print("Camera sees marker %s at x=%.3f m, y=%.3f m, yaw=%.1f deg, qual=%.1f" %
               (str(cam_id), cam_x_m, cam_y_m, cam_yaw_deg, cam_qual))
-        
-        if (cam_qual >= 9) and (cam_id in circle_dict):
-            cur_heading_deg = wrap_angle_deg(math.degrees(bot_odom.bot_rad))
-            print("Cam corr current: x=%.3f y=%.3f hdg=%.1f" %
-                (bot_odom.botx, bot_odom.boty, cur_heading_deg))
 
-            marker_yaw_deg = marker_map_yaw_deg.get(cam_id, 0.0)
-            corr = apply_camera_pose_correction(
-                bot_odom, circle_dict[cam_id],  # target waypoint for this marker ID
-                cam_x_m, cam_y_m, cam_yaw_deg,
-                marker_yaw_deg
-            )
+        # Stage 1: potential detection threshold.
+        if (cam_qual >= 4) and (cam_id in circle_dict):
+            tag_gate_ok = distance_since_tag > 0.3 or angle_since_tag_deg > 90.0
+            print("Tag gate: dist_since=%.3f angle_since=%.1f ok=%s" %
+                  (distance_since_tag, angle_since_tag_deg, str(tag_gate_ok)))
+            if tag_gate_ok:
+                # Stop first, then wait briefly for a high-quality sample.
+                bot_odom.stop(immediate=True)
 
-            print("Cam corr measured: x=%.3f y=%.3f hdg=%.1f (tag_yaw=%.1f), err_d=%.3f err_h=%.1f, applied=%s" %
-                (corr["measured_x"], corr["measured_y"], corr["measured_heading_deg"],
-                   corr["marker_map_yaw_deg"],
-                 corr["pose_err_dist_m"], corr["heading_err_deg"], str(corr["applied"])))
+                corr_pose = None
+                corr_marker_id = None
+                wait_start_ms = time.ticks_ms()
+                time.sleep_ms(100)  # brief initial pause to allow for new samples after stop
+                while time.ticks_diff(time.ticks_ms(), wait_start_ms) < 1000:
+                    if CAMERA_INPUT_ENABLED and cam is not None:
+                        try:
+                            cam.update()
+                        except Exception as exc:
+                            print("cam.update exception (wait):", type(exc).__name__)
+                            sys.print_exception(exc)
+                            try:
+                                cam._buf = bytearray()
+                            except Exception:
+                                pass
+                        wait_pose = cam.get_nearest(fresh_only=True)
+                        if (wait_pose is not None
+                                and wait_pose["id"] in circle_dict
+                                and wait_pose["qual"] >= 4):
+                            corr_pose = wait_pose
+                            corr_marker_id = wait_pose["id"]
+                            break
+                    time.sleep_ms(20)
+
+                if corr_pose is not None:
+                    cur_heading_deg = wrap_angle_deg(math.degrees(bot_odom.bot_rad))
+                    print("Cam corr current: x=%.3f y=%.3f hdg=%.1f" %
+                          (bot_odom.botx, bot_odom.boty, cur_heading_deg))
+
+                    marker_yaw_deg = marker_map_yaw_deg.get(corr_marker_id, 0.0)
+                    corr = apply_camera_pose_correction(
+                        bot_odom, circle_dict[corr_marker_id],  # target waypoint for this marker ID
+                        corr_pose["x_m"], corr_pose["y_m"], corr_pose["yaw_deg"],
+                        marker_yaw_deg
+                    )
+
+                    print("Cam corr measured: x=%.3f y=%.3f hdg=%.1f (tag_yaw=%.1f), err_d=%.3f err_h=%.1f, applied=%s" %
+                          (corr["measured_x"], corr["measured_y"], corr["measured_heading_deg"],
+                           corr["marker_map_yaw_deg"],
+                           corr["pose_err_dist_m"], corr["heading_err_deg"], str(corr["applied"])))
+
+                    # Reset gating counters after correction attempt.
+                    distance_since_tag = 0.0
+                    angle_since_tag_deg = 0.0
+                    _prev_odom_dist_tag = bot_odom.dist
+                    _prev_bot_rad_tag = bot_odom.bot_rad
+                else:
+                    print("Tag wait timeout: no qual>=9 sample for any known marker within 1.0 s")
 
     if (now - odom_time) > odom_period_msec:
         if imu.gyro.data_ready():
@@ -307,6 +361,14 @@ while True:
         odom_time = now
         bot_odom.update_odom_and_control(enc[0], enc[1], dt_s)
 
+        # Update distance and cumulative absolute angle since last tag correction.
+        delta_dist = bot_odom.dist - _prev_odom_dist_tag
+        _prev_odom_dist_tag = bot_odom.dist
+        distance_since_tag += delta_dist
+        delta_angle_deg = abs(wrap_angle_deg(math.degrees(bot_odom.bot_rad) - math.degrees(_prev_bot_rad_tag)))
+        _prev_bot_rad_tag = bot_odom.bot_rad
+        angle_since_tag_deg += delta_angle_deg
+
         line = line_sensors.read()
         line_sensors.start_read()
     
@@ -316,7 +378,7 @@ while True:
     wp_diff = wp - bxy
     dist_to_goal = wp_diff.distance()
     
-    near_goal = dist_to_goal < 0.05
+    near_goal = dist_to_goal < 0.02
     
     des_heading = wp_diff.angle_deg()
     bot_heading_deg = bot_odom.bot_rad * 180.0 / math.pi
@@ -378,13 +440,13 @@ while True:
         bot_odom.stop(immediate=True)
         state = next_state
     elif state == state_track:    
-        if abs(yaw_error_deg) < 10.0:
+        if abs(yaw_error_deg) < 5.0:
             # Heading is good - move forward
             left_target_mps = left_track_mps
             right_target_mps = right_track_mps
-        elif abs(yaw_error_deg) < 30.0:
+        elif abs(yaw_error_deg) < 20.0:
             # Heading is off but not too much - move forward with correction
-            offset_mps = heading_correction_mps * yaw_error_deg / 30.0
+            offset_mps = heading_correction_mps * yaw_error_deg / 20.0
             left_target_mps = left_track_mps + offset_mps
             right_target_mps = right_track_mps - offset_mps
         else:
@@ -396,7 +458,7 @@ while True:
         # Turn in place until heading is better
         left_target_mps = turn_speed_mps * yaw_error_sign
         right_target_mps = -turn_speed_mps * yaw_error_sign
-        if abs(yaw_error_deg) < 15.0:  # Use 15 deg threshold to exit turn with hysteresis
+        if abs(yaw_error_deg) < 5.0:  # Use 5 deg threshold to exit turn with hysteresis
             bot_odom.set_target_speeds_mps(0.0, 0.0)
             state = state_stop
             next_state = state_track
