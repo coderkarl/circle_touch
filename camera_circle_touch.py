@@ -120,7 +120,8 @@ def wrap_angle_deg(angle_deg):
     return angle_deg
 
 
-def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, cam_yaw_deg):
+def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, cam_yaw_deg,
+                                 marker_map_yaw_deg=0.0):
     """
     Correct robot odometry using camera-measured ArUco marker pose in the robot frame.
 
@@ -141,24 +142,47 @@ def apply_camera_pose_correction(bot_odom, target_waypoint, cam_x_m, cam_y_m, ca
     is started with its heading aligned to the map +X axis, so the initial
     bot_rad = 0.0 is consistent with this assumption.
     """
-    cos_h = math.cos(bot_odom.bot_rad)
-    sin_h = math.sin(bot_odom.bot_rad)
+    max_pose_update_dist_m = 0.25
+    max_pose_update_heading_deg = 20.0
 
-    # Corrected robot position in map frame
-    corrected_x = target_waypoint.x - (cam_x_m * cos_h - cam_y_m * sin_h)
-    corrected_y = target_waypoint.y - (cam_x_m * sin_h + cam_y_m * cos_h)
+    measured_bot_heading_deg = wrap_angle_deg(marker_map_yaw_deg - cam_yaw_deg)
+    measured_bot_heading_rad = math.radians(measured_bot_heading_deg)
+    cos_h = math.cos(measured_bot_heading_rad)
+    sin_h = math.sin(measured_bot_heading_rad)
 
-    # if abs(corrected_x - bot_odom.botx) > 0.1 or abs(corrected_y - bot_odom.boty) > 0.1:
-        # return
-    bot_odom.botx = corrected_x
-    bot_odom.boty = corrected_y
+    measured_bot_x = target_waypoint.x - (cam_x_m * cos_h - cam_y_m * sin_h)
+    measured_bot_y = target_waypoint.y - (cam_x_m * sin_h + cam_y_m * cos_h)
 
-    # Heading correction: ArUco x-axis is aligned with map x-axis, so the
-    # marker's map-frame yaw is 0.  The camera reports cam_yaw_deg = marker
-    # yaw in the robot frame (CCW positive).  Therefore:
-    #   marker_map_yaw = bot_rad + cam_yaw_rad = 0
-    #   => bot_rad = -cam_yaw_rad
-    bot_odom.bot_rad = -math.radians(cam_yaw_deg)
+    pose_err_x = measured_bot_x - bot_odom.botx
+    pose_err_y = measured_bot_y - bot_odom.boty
+    pose_err_dist_m = (pose_err_x * pose_err_x + pose_err_y * pose_err_y) ** 0.5
+
+    current_bot_heading_deg = math.degrees(bot_odom.bot_rad)
+    heading_err_deg = abs(wrap_angle_deg(current_bot_heading_deg - measured_bot_heading_deg))
+
+    if pose_err_dist_m > max_pose_update_dist_m or heading_err_deg > max_pose_update_heading_deg:
+        return {
+            "applied": False,
+            "measured_x": measured_bot_x,
+            "measured_y": measured_bot_y,
+            "measured_heading_deg": measured_bot_heading_deg,
+            "marker_map_yaw_deg": marker_map_yaw_deg,
+            "pose_err_dist_m": pose_err_dist_m,
+            "heading_err_deg": heading_err_deg,
+        }
+
+    bot_odom.botx = measured_bot_x
+    bot_odom.boty = measured_bot_y
+    bot_odom.bot_rad = measured_bot_heading_rad
+    return {
+        "applied": True,
+        "measured_x": measured_bot_x,
+        "measured_y": measured_bot_y,
+        "measured_heading_deg": measured_bot_heading_deg,
+        "marker_map_yaw_deg": marker_map_yaw_deg,
+        "pose_err_dist_m": pose_err_dist_m,
+        "heading_err_deg": heading_err_deg,
+    }
 
 
 
@@ -204,6 +228,12 @@ for i, wp_type in enumerate(waypoint_types):
     if wp_type == "CIRCLE":
         circle_dict[waypoint_ids[i]] = waypoints[i]
         print("Circle waypoint: id=%d at (%.3f, %.3f)" % (waypoint_ids[i], waypoints[i].x, waypoints[i].y))
+
+# Marker map-frame yaw (deg). Use 0 deg when local tag +x is aligned with map +x.
+default_marker_map_yaw_deg = 0.0
+marker_map_yaw_deg = {}
+for marker_id in circle_dict:
+    marker_map_yaw_deg[marker_id] = default_marker_map_yaw_deg
 
 line = [0, 0, 0, 0, 0]
 
@@ -252,10 +282,21 @@ while True:
               (str(cam_id), cam_x_m, cam_y_m, cam_yaw_deg, cam_qual))
         
         if (cam_qual >= 9) and (cam_id in circle_dict):
-            apply_camera_pose_correction(
+            cur_heading_deg = wrap_angle_deg(math.degrees(bot_odom.bot_rad))
+            print("Cam corr current: x=%.3f y=%.3f hdg=%.1f" %
+                (bot_odom.botx, bot_odom.boty, cur_heading_deg))
+
+            marker_yaw_deg = marker_map_yaw_deg.get(cam_id, 0.0)
+            corr = apply_camera_pose_correction(
                 bot_odom, circle_dict[cam_id],  # target waypoint for this marker ID
-                cam_x_m, cam_y_m, cam_yaw_deg
+                cam_x_m, cam_y_m, cam_yaw_deg,
+                marker_yaw_deg
             )
+
+            print("Cam corr measured: x=%.3f y=%.3f hdg=%.1f (tag_yaw=%.1f), err_d=%.3f err_h=%.1f, applied=%s" %
+                (corr["measured_x"], corr["measured_y"], corr["measured_heading_deg"],
+                   corr["marker_map_yaw_deg"],
+                 corr["pose_err_dist_m"], corr["heading_err_deg"], str(corr["applied"])))
 
     if (now - odom_time) > odom_period_msec:
         if imu.gyro.data_ready():
