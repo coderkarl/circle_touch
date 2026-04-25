@@ -23,7 +23,7 @@ line_sensors = robot.LineSensors()
 encoders = robot.Encoders()
 motors = robot.Motors()
 bot_odom = odom.SpeedControlledOdom(motors)
-bot_odom.bot_rad = math.pi/2  # Start with heading aligned to +X axis of the map
+bot_odom.bot_rad = 0.0 #math.pi/2  # Start with heading aligned to +X axis of the map
 bump_sensors = robot.BumpSensors()
 buzzer = robot.Buzzer()
 display = robot.Display()
@@ -205,26 +205,34 @@ if square_test:
         waypoint_types.append("INTERMEDIATE")
         waypoint_ids.append(-1)
 else:
-    waypoints.append(Point(0.0, 0.0))
-    waypoints.append(Point(0.0, 0.6)) #circle
-    waypoints.append(Point(-0.3, 0.6))
-    waypoints.append(Point(-0.45, 0.1))
-    waypoints.append(Point(-0.59, 0.3))
-    waypoints.append(Point(-0.59, 0.6)) #circle
+    waypoints.append(Point(0.0, 0.0)) # home         0
+    waypoints.append(Point(0.90, 0.0)) #circle 1     1
+    waypoints.append(Point(0.36, 0.0)) #intm         2
+    waypoints.append(Point(0.36, 0.54)) #intm        3
+    waypoints.append(Point(0.0, 0.54)) # circle 2    4
+    waypoints.append(Point(0.9, 0.54)) #intm         5
+    waypoints.append(Point(0.9, 1.26)) #intm         6
+    waypoints.append(Point(0.54, 1.26)) #intm        7
+    waypoints.append(Point(0.54, 0.9)) #intm         8
+    waypoints.append(Point(0.0, 0.9)) #circle        9
+    waypoints.append(Point(0.18, 7*0.18)) #intm         10
+    waypoints.append(Point(0.0, 9*0.18)) #intm         11
+    waypoints.append(Point(0.0, 12*0.18)) #intm         12
+    waypoints.append(Point(3*0.18, 11*0.18)) #intm         13
+    waypoints.append(Point(5*0.18, 11*0.18)) #intm         14
+    waypoints.append(Point(5*0.18, 9*0.18)) #circle         15
 
-    waypoint_types.append("INTERMEDIATE")
-    waypoint_types.append("CIRCLE")
-    waypoint_types.append("INTERMEDIATE")
-    waypoint_types.append("INTERMEDIATE")
-    waypoint_types.append("INTERMEDIATE")
-    waypoint_types.append("CIRCLE")
+    waypoint_types = ["INTERMEDIATE"] * len(waypoints)
+    waypoint_types[1] = "CIRCLE"
+    waypoint_types[4] = "CIRCLE"
+    waypoint_types[9] = "CIRCLE"
+    waypoint_types[15] = "CIRCLE"
 
-    waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
-    waypoint_ids.append(10)  # CIRCLE marker id
-    waypoint_ids.append(-1)
-    waypoint_ids.append(-1)
-    waypoint_ids.append(-1)  # not a circle (INTERMEDIATE)
-    waypoint_ids.append(11)  # CIRCLE marker id
+    waypoint_ids = [-1] * len(waypoints)
+    waypoint_ids[1] = 1
+    waypoint_ids[4] = 2
+    waypoint_ids[9] = 3
+    waypoint_ids[15] = 0
 
 wp_ind = 1
 num_wp = len(waypoints)
