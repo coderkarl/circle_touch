@@ -29,11 +29,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hz", type=float, default=10.0, help="Capture rate in Hz (default: 10)")
     parser.add_argument("--width", type=int, default=1280, help="Frame width (default: 1280)")
     parser.add_argument("--height", type=int, default=720, help="Frame height (default: 720)")
+    parser.add_argument(
+        "--capture-all",
+        action="store_true",
+        help="Save every frame instead of only frames with ArUco detections",
+    )
     return parser.parse_args()
 
 
 def parse_device(device_arg: str) -> int | str:
     return int(device_arg) if device_arg.isdigit() else device_arg
+
+
+def annotate_aruco(frame, corners, ids):
+    if ids is not None and len(ids) > 0:
+        cv2.aruco.drawDetectedMarkers(frame, corners, ids, borderColor=(0, 255, 0))
+    return frame
+
+
+def save_frame(output_dir: Path, prefix: str, frame) -> Path:
+    capture_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    file_path = output_dir / f"{prefix}_{capture_ts}.jpg"
+    cv2.imwrite(str(file_path), frame)
+    return file_path
 
 
 def run_rpicam_vid_stream(args: argparse.Namespace, output_dir: Path) -> None:
@@ -43,7 +61,8 @@ def run_rpicam_vid_stream(args: argparse.Namespace, output_dir: Path) -> None:
 
     aruco_dict, detector, params, legacy = SharedBuildArucoDetector("DICT_4X4_50", {})
 
-    print(f"Detecting ArUco markers. Saving frames with detections to {output_dir}.")
+    mode_text = "all frames" if args.capture_all else "frames with detections"
+    print(f"Detecting ArUco markers. Saving {mode_text} to {output_dir}.")
     print("Press Ctrl+C to stop.")
 
     frame_count = 0
@@ -60,11 +79,15 @@ def run_rpicam_vid_stream(args: argparse.Namespace, output_dir: Path) -> None:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             corners, ids = SharedDetectMarkers(gray, aruco_dict, detector, params, legacy)
 
+            should_save = args.capture_all or (ids is not None and len(ids) > 0)
+            if should_save:
+                annotated = frame.copy()
+                annotate_aruco(annotated, corners, ids)
+                prefix = "frame" if args.capture_all else "frame_with_aruco"
+                save_frame(output_dir, prefix, annotated)
+
             if ids is not None and len(ids) > 0:
                 detections_count += 1
-                capture_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                file_path = output_dir / f"frame_with_aruco_{capture_ts}.jpg"
-                cv2.imwrite(str(file_path), frame)
                 print(f"Found {len(ids)} ArUco marker(s) in frame {frame_count}, saved.")
 
             if frame_count % 100 == 0:
@@ -102,6 +125,9 @@ def main() -> None:
         f"Saving frames to {output_dir} at {args.hz:g} Hz "
         f"({args.width}x{args.height}) from {args.device}. Press Ctrl+C to stop."
     )
+    if args.capture_all:
+        print("Capture-all mode enabled: every frame will be saved.")
+    aruco_dict, detector, params, legacy = SharedBuildArucoDetector("DICT_4X4_50", {})
     frame_count = 0
     next_capture_time = time.monotonic()
 
@@ -112,12 +138,19 @@ def main() -> None:
                 time.sleep(next_capture_time - now)
 
             ok, frame = cap.read()
-            capture_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
             if ok and frame is not None:
-                file_path = output_dir / f"frame_{capture_ts}.jpg"
-                cv2.imwrite(str(file_path), frame)
                 frame_count += 1
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                corners, ids = SharedDetectMarkers(gray, aruco_dict, detector, params, legacy)
+
+                should_save = args.capture_all or (ids is not None and len(ids) > 0)
+                if should_save:
+                    annotated = frame.copy()
+                    annotate_aruco(annotated, corners, ids)
+                    prefix = "frame" if args.capture_all else "frame_with_aruco"
+                    save_frame(output_dir, prefix, annotated)
+
                 if frame_count % 10 == 0:
                     print(f"Captured {frame_count} frames")
             else:
