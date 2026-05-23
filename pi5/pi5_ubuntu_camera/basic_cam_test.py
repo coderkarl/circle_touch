@@ -10,6 +10,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from camera_utils import (
+    RPiCamMJPEGStream as SharedRPiCamMJPEGStream,
+    build_aruco_detector as SharedBuildArucoDetector,
+    detect_markers as SharedDetectMarkers,
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -31,117 +37,43 @@ def parse_device(device_arg: str) -> int | str:
 
 
 def run_rpicam_vid_stream(args: argparse.Namespace, output_dir: Path) -> None:
-    """Capture continuous MJPEG video with rpicam-vid, decode frames, detect ArUco, save detections."""
-    width, height = args.width, args.height
-    
-    env = os.environ.copy()
-    local_lib = "/usr/local/lib/aarch64-linux-gnu"
-    env["LD_LIBRARY_PATH"] = f"{local_lib}:{env.get('LD_LIBRARY_PATH', '')}".rstrip(":")
-    env.setdefault("LIBCAMERA_IPA_MODULE_PATH", f"{local_lib}/libcamera/ipa")
+    """Capture frames from the shared MJPEG stream, detect ArUco, and save detections."""
+    stream = SharedRPiCamMJPEGStream(width=args.width, height=args.height, hz=args.hz, device=args.device)
+    stream.start()
 
-    cmd = [
-        "/usr/local/bin/rpicam-vid",
-        "--codec", "mjpeg",
-        "--framerate", str(int(args.hz)),
-        "--width", str(width),
-        "--height", str(height),
-        "--nopreview",
-        "-t", "0",
-        "-o", "-",
-    ]
+    aruco_dict, detector, params, legacy = SharedBuildArucoDetector("DICT_4X4_50", {})
 
-    if str(args.device).isdigit():
-        cmd.extend(["--camera", str(args.device)])
-
-    print("Starting rpicam-vid MJPEG stream capture.")
-    print(f"Command: {' '.join(cmd)}")
     print(f"Detecting ArUco markers. Saving frames with detections to {output_dir}.")
     print("Press Ctrl+C to stop.")
 
-    try:
-        proc = subprocess.Popen(
-            cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
-        )
-        # Check if process started ok
-        time.sleep(0.5)
-        if proc.poll() is not None:
-            stderr = proc.stderr.read().decode('utf-8', errors='ignore')
-            print(f"ERROR: rpicam-vid exited immediately with code {proc.returncode}")
-            print(f"stderr:\n{stderr}")
-            raise SystemExit("rpicam-vid startup failed")
-    except FileNotFoundError:
-        raise SystemExit("ERROR: /usr/local/bin/rpicam-vid not found")
-
     frame_count = 0
     detections_count = 0
-    buffer = b""
-    jpeg_start = b'\xff\xd8'
-    jpeg_end = b'\xff\xd9'
 
     try:
         while True:
-            chunk = proc.stdout.read(65536)
-            if not chunk:
-                stderr = proc.stderr.read().decode('utf-8', errors='ignore')
-                if stderr:
-                    print(f"rpicam-vid stderr:\n{stderr}", file=sys.stderr)
-                print("ERROR: rpicam-vid stdout ended unexpectedly")
+            frame = stream.get_latest_frame(timeout=2.0)
+            if frame is None:
+                print("ERROR: no frame available from stream")
                 break
-            buffer += chunk
 
-            # Find and extract complete JPEG frames
-            while True:
-                start_idx = buffer.find(jpeg_start)
-                if start_idx == -1:
-                    break
-                
-                end_idx = buffer.find(jpeg_end, start_idx)
-                if end_idx == -1:
-                    # Incomplete JPEG, keep it in buffer
-                    buffer = buffer[start_idx:]
-                    break
-                
-                jpeg_data = buffer[start_idx : end_idx + 2]
-                buffer = buffer[end_idx + 2:]
+            frame_count += 1
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            corners, ids = SharedDetectMarkers(gray, aruco_dict, detector, params, legacy)
 
-                # Decode JPEG
-                nparr = np.frombuffer(jpeg_data, np.uint8)
-                bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                
-                if bgr is None:
-                    continue
+            if ids is not None and len(ids) > 0:
+                detections_count += 1
+                capture_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                file_path = output_dir / f"frame_with_aruco_{capture_ts}.jpg"
+                cv2.imwrite(str(file_path), frame)
+                print(f"Found {len(ids)} ArUco marker(s) in frame {frame_count}, saved.")
 
-                frame_count += 1
-
-                # Detect ArUco markers (compatible with OpenCV 3.4+)
-                try:
-                    # New API (OpenCV 4.7.0+)
-                    adict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-                    corners, ids, rejected = cv2.aruco.detectMarkers(bgr, adict)
-                except AttributeError:
-                    # Older API (OpenCV 3.4-4.6)
-                    adict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
-                    corners, ids, rejected = cv2.aruco.detectMarkers(bgr, adict)
-
-                if ids is not None and len(ids) > 0:
-                    detections_count += 1
-                    capture_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                    file_path = output_dir / f"frame_with_aruco_{capture_ts}.jpg"
-                    cv2.imwrite(str(file_path), bgr)
-                    print(f"Found {len(ids)} ArUco marker(s) in frame {frame_count}, saved.")
-
-                if frame_count % 100 == 0:
-                    print(f"Processed {frame_count} frames, {detections_count} with ArUco detections.")
+            if frame_count % 100 == 0:
+                print(f"Processed {frame_count} frames, {detections_count} with ArUco detections.")
 
     except KeyboardInterrupt:
         print(f"\nStopped. Processed {frame_count} frames, found ArUco in {detections_count}.")
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+        stream.stop()
 
 
 def main() -> None:

@@ -19,11 +19,8 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import signal
-import subprocess
 import sys
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +28,8 @@ from typing import Optional
 
 import cv2
 import numpy as np
+
+from camera_utils import RPiCamMJPEGStream as SharedRPiCamMJPEGStream
 
 RUNNING = True
 
@@ -75,137 +74,6 @@ def detect_checkerboard_bbox(frame, board_cols: int, board_rows: int):
     return True, (top_left, bottom_right)
 
 
-class RPiCamMJPEGStream:
-    def __init__(self, width: int, height: int, hz: float, device: str) -> None:
-        self.width = width
-        self.height = height
-        self.hz = hz
-        self.device = device
-        self.proc: Optional[subprocess.Popen] = None
-        self.thread: Optional[threading.Thread] = None
-        self.running = False
-        self.buffer = bytearray()
-        self.latest_frame = None
-        self.frame_lock = threading.Lock()
-        self.frame_event = threading.Event()
-        self.stderr_lines: list[str] = []
-
-    def _build_env(self) -> dict[str, str]:
-        env = os.environ.copy()
-        local_lib = "/usr/local/lib/aarch64-linux-gnu"
-        env["LD_LIBRARY_PATH"] = f"{local_lib}:{env.get('LD_LIBRARY_PATH', '')}".rstrip(":")
-        env.setdefault("LIBCAMERA_IPA_MODULE_PATH", f"{local_lib}/libcamera/ipa")
-        return env
-
-    def _build_cmd(self) -> list[str]:
-        cmd = [
-            "/usr/local/bin/rpicam-vid",
-            "--codec",
-            "mjpeg",
-            "--framerate",
-            str(max(1, int(round(self.hz)))),
-            "--width",
-            str(self.width),
-            "--height",
-            str(self.height),
-            "--nopreview",
-            "-t",
-            "0",
-            "-o",
-            "-",
-        ]
-        if str(self.device).isdigit():
-            cmd.extend(["--camera", str(self.device)])
-        return cmd
-
-    def start(self) -> None:
-        cmd = self._build_cmd()
-        logging.info("Starting stream: %s", " ".join(cmd))
-        try:
-            self.proc = subprocess.Popen(
-                cmd,
-                env=self._build_env(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0,
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError("/usr/local/bin/rpicam-vid not found") from exc
-
-        time.sleep(0.5)
-        if self.proc.poll() is not None:
-            stderr = self.proc.stderr.read().decode("utf-8", errors="ignore") if self.proc.stderr else ""
-            raise RuntimeError(f"rpicam-vid failed to start (code {self.proc.returncode})\n{stderr}")
-
-        self.running = True
-        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
-        self.thread.start()
-
-    def _reader_loop(self) -> None:
-        assert self.proc is not None and self.proc.stdout is not None
-        jpeg_start = b"\xff\xd8"
-        jpeg_end = b"\xff\xd9"
-
-        while self.running:
-            chunk = self.proc.stdout.read(65536)
-            if not chunk:
-                self.running = False
-                break
-            self.buffer.extend(chunk)
-
-            while True:
-                start_idx = self.buffer.find(jpeg_start)
-                if start_idx == -1:
-                    if len(self.buffer) > 1_000_000:
-                        self.buffer.clear()
-                    break
-
-                end_idx = self.buffer.find(jpeg_end, start_idx)
-                if end_idx == -1:
-                    if start_idx > 0:
-                        del self.buffer[:start_idx]
-                    break
-
-                jpeg_data = bytes(self.buffer[start_idx : end_idx + 2])
-                del self.buffer[: end_idx + 2]
-
-                frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
-                if frame is None:
-                    continue
-
-                with self.frame_lock:
-                    self.latest_frame = frame
-                self.frame_event.set()
-
-        if self.proc and self.proc.stderr:
-            try:
-                stderr_text = self.proc.stderr.read().decode("utf-8", errors="ignore")
-                if stderr_text:
-                    self.stderr_lines.append(stderr_text)
-            except Exception:
-                pass
-
-    def get_latest_frame(self, timeout: float = 2.0):
-        if not self.frame_event.wait(timeout=timeout):
-            return None
-        with self.frame_lock:
-            if self.latest_frame is None:
-                return None
-            return self.latest_frame.copy()
-
-    def stop(self) -> None:
-        self.running = False
-        if self.proc is not None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait()
-        if self.thread is not None:
-            self.thread.join(timeout=1)
-
-
 def save_frame(output_dir: Path, index: int, frame, quality: int) -> Path:
     filename = output_dir / timestamp_filename(index)
     cv2.imwrite(str(filename), frame, [cv2.IMWRITE_JPEG_QUALITY, int(max(1, min(100, quality)))])
@@ -224,7 +92,7 @@ def run_interactive(
     device: str,
 ) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
-    stream = RPiCamMJPEGStream(width=width, height=height, hz=hz, device=device)
+    stream = SharedRPiCamMJPEGStream(width=width, height=height, hz=hz, device=device)
 
     try:
         stream.start()
@@ -285,7 +153,7 @@ def run_timed(
     device: str,
 ) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
-    stream = RPiCamMJPEGStream(width=width, height=height, hz=hz, device=device)
+    stream = SharedRPiCamMJPEGStream(width=width, height=height, hz=hz, device=device)
 
     try:
         stream.start()
