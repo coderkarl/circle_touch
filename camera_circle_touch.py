@@ -206,33 +206,36 @@ if square_test:
         waypoint_ids.append(-1)
 else:
     waypoints.append(Point(0.0, 0.0)) # home         0
-    waypoints.append(Point(0.90, 0.0)) #circle 1     1
-    waypoints.append(Point(0.36, 0.0)) #intm         2
-    waypoints.append(Point(0.36, 0.54)) #intm        3
-    waypoints.append(Point(0.0, 0.54)) # circle 2    4
-    waypoints.append(Point(0.9, 0.54)) #intm         5
-    waypoints.append(Point(0.9, 1.26)) #intm         6
-    waypoints.append(Point(0.54, 1.26)) #intm        7
-    waypoints.append(Point(0.54, 0.9)) #intm         8
-    waypoints.append(Point(0.0, 0.9)) #circle        9
-    waypoints.append(Point(0.18, 7*0.18)) #intm         10
-    waypoints.append(Point(0.0, 9*0.18)) #intm         11
-    waypoints.append(Point(0.0, 12*0.18)) #intm         12
-    waypoints.append(Point(3*0.18, 11*0.18)) #intm         13
-    waypoints.append(Point(5*0.18, 11*0.18)) #intm         14
-    waypoints.append(Point(5*0.18, 9*0.18)) #circle         15
+    waypoints.append(Point(0.36, 0.06)) #intm         1
+    waypoints.append(Point(0.90, 0.0)) #circle 1     2
+    waypoints.append(Point(0.36, 0.0)) #intm         3
+    waypoints.append(Point(0.36, 0.54)) #intm        4
+    waypoints.append(Point(0.0, 0.54)) # circle 2    5
+    waypoints.append(Point(0.9, 0.54)) #intm         6
+    waypoints.append(Point(0.9, 1.26)) #intm         7
+    waypoints.append(Point(0.54, 1.26)) #intm        8
+    waypoints.append(Point(0.54, 0.9)) #intm         9
+    waypoints.append(Point(0.0, 0.9)) #circle        10
+    waypoints.append(Point(0.18, 7*0.18)) #intm         11
+    waypoints.append(Point(0.0, 9*0.18)) #intm         12
+    waypoints.append(Point(0.0, 12*0.18)) #intm         13
+    waypoints.append(Point(3*0.18, 11*0.18)) #intm         14
+    waypoints.append(Point(5*0.18, 11*0.18)) #intm         15
+    waypoints.append(Point(5*0.18, 9*0.18)) #circle         16
 
     waypoint_types = ["INTERMEDIATE"] * len(waypoints)
-    waypoint_types[1] = "CIRCLE"
-    waypoint_types[4] = "CIRCLE"
-    waypoint_types[9] = "CIRCLE"
-    waypoint_types[15] = "CIRCLE"
+    waypoint_types[0] = "CIRCLE"
+    waypoint_types[2] = "CIRCLE"
+    waypoint_types[5] = "CIRCLE"
+    waypoint_types[10] = "CIRCLE"
+    waypoint_types[16] = "CIRCLE"
 
     waypoint_ids = [-1] * len(waypoints)
-    waypoint_ids[1] = 1
-    waypoint_ids[4] = 2
-    waypoint_ids[9] = 3
-    waypoint_ids[15] = 0
+    waypoint_ids[0] = 0
+    waypoint_ids[2] = 1
+    waypoint_ids[5] = 2
+    waypoint_ids[10] = 3
+    waypoint_ids[16] = 4
 
 wp_ind = 1
 num_wp = len(waypoints)
@@ -248,6 +251,23 @@ default_marker_map_yaw_deg = 0.0
 marker_map_yaw_deg = {}
 for marker_id in circle_dict:
     marker_map_yaw_deg[marker_id] = default_marker_map_yaw_deg
+
+# Vertical wall aruco tags with their map coordinates and headings
+wall_tags = [
+    {"id": 10, "x": 2*0.18, "y": 4*0.18, "yaw_deg": 0},
+    {"id": 11, "x": 5*0.18, "y": 8*0.18, "yaw_deg": 0},
+    {"id": 12, "x": 1*0.18, "y": 10.5*0.18, "yaw_deg": 90},
+    {"id": 13, "x": 5*0.18, "y": 1*0.18, "yaw_deg": 180},
+]
+
+wall_dict = {}
+wall_tag_ids = []
+for wall_tag in wall_tags:
+    tag_id = wall_tag["id"]
+    wall_dict[tag_id] = Point(wall_tag["x"], wall_tag["y"])
+    wall_tag_ids.append(tag_id)
+    marker_map_yaw_deg[tag_id] = wall_tag["yaw_deg"]
+    print("Wall tag: id=%d at (%.3f, %.3f) yaw=%.1f deg" % (tag_id, wall_tag["x"], wall_tag["y"], wall_tag["yaw_deg"]))
 
 line = [0, 0, 0, 0, 0]
 
@@ -302,8 +322,8 @@ while True:
         print("Camera sees marker %s at x=%.3f m, y=%.3f m, yaw=%.1f deg, qual=%.1f" %
               (str(cam_id), cam_x_m, cam_y_m, cam_yaw_deg, cam_qual))
 
-        # Stage 1: potential detection threshold.
-        if (cam_qual >= 4) and (cam_id in circle_dict):
+        # Stage 1: potential detection threshold for circle or wall markers.
+        if (cam_qual >= 4) and ((cam_id in circle_dict) or (cam_id in wall_dict)):
             tag_gate_ok = distance_since_tag > 0.3 or angle_since_tag_deg > 90.0
             print("Tag gate: dist_since=%.3f angle_since=%.1f ok=%s" %
                   (distance_since_tag, angle_since_tag_deg, str(tag_gate_ok)))
@@ -328,7 +348,7 @@ while True:
                                 pass
                         wait_pose = cam.get_nearest(fresh_only=True)
                         if (wait_pose is not None
-                                and wait_pose["id"] in circle_dict
+                                and ((wait_pose["id"] in circle_dict) or (wait_pose["id"] in wall_dict))
                                 and wait_pose["qual"] >= 4):
                             corr_pose = wait_pose
                             corr_marker_id = wait_pose["id"]
@@ -341,8 +361,12 @@ while True:
                           (bot_odom.botx, bot_odom.boty, cur_heading_deg))
 
                     marker_yaw_deg = marker_map_yaw_deg.get(corr_marker_id, 0.0)
+                    
+                    # Use circle_dict if available, otherwise wall_dict
+                    target_waypoint = circle_dict.get(corr_marker_id) or wall_dict.get(corr_marker_id)
+                    
                     corr = apply_camera_pose_correction(
-                        bot_odom, circle_dict[corr_marker_id],  # target waypoint for this marker ID
+                        bot_odom, target_waypoint,
                         corr_pose["x_m"], corr_pose["y_m"], corr_pose["yaw_deg"],
                         marker_yaw_deg
                     )
@@ -358,7 +382,7 @@ while True:
                     _prev_odom_dist_tag = bot_odom.dist
                     _prev_bot_rad_tag = bot_odom.bot_rad
                 else:
-                    print("Tag wait timeout: no qual>=9 sample for any known marker within 1.0 s")
+                    print("Tag wait timeout: no qual>=4 sample for any known marker within 1.0 s")
 
     if (now - odom_time) > odom_period_msec:
         if imu.gyro.data_ready():
@@ -386,7 +410,7 @@ while True:
     wp_diff = wp - bxy
     dist_to_goal = wp_diff.distance()
     
-    near_goal = dist_to_goal < 0.02
+    near_goal = dist_to_goal < 0.05
     
     des_heading = wp_diff.angle_deg()
     bot_heading_deg = bot_odom.bot_rad * 180.0 / math.pi

@@ -282,6 +282,47 @@ def marker_robot_pose(tvec: np.ndarray, rvec: np.ndarray,
     return x_r, y_r, yaw_r, dist_c
 
 
+def wall_tag_robot_pose(tvec: np.ndarray, rvec: np.ndarray,
+                        R_rc: np.ndarray, t_rc: np.ndarray):
+    """
+    Convert a vertical wall tag's camera-frame pose into robot frame.
+    
+    For a vertical tag on a wall:
+    - Tag y-axis: vertical (up)
+    - Tag x-axis: horizontal along the wall (perpendicular to wall normal)
+    - Tag z-axis: normal to tag (pointing out from wall toward camera/robot)
+    
+    The tag x and z axes lie in the robot XY plane.
+    
+    Returns: (x_r_m, y_r_m, yaw_r_rad)
+      x_r_m, y_r_m: tag position in robot frame (robot forward and left), meters.
+      yaw_r_rad: tag heading in robot frame — angle of the tag's x-axis
+                 projected onto the robot XY plane, CCW from robot forward (+x_r).
+                 Note: when robot faces a vertical wall tag head-on, yaw = -90°
+                 (tag x-axis points toward robot right, perpendicular to robot forward).
+    """
+    p_c = tvec.flatten()
+
+    # Tag position in robot frame
+    p_r = R_rc @ p_c + t_rc
+
+    x_r = float(p_r[0])
+    y_r = float(p_r[1])
+
+    # Get rotation matrix: columns are tag frame axes in robot frame
+    R_tag_axes_in_cam, _ = cv2.Rodrigues(rvec)
+    R_rm = R_rc @ R_tag_axes_in_cam
+
+    # Tag x-axis (horizontal, along the wall) in robot frame
+    # Project onto XY plane and get bearing
+    yaw_r = math.atan2(float(R_rm[1, 0]), float(R_rm[0, 0]))
+
+    # Camera-frame distance
+    dist_c = float(np.linalg.norm(p_c))
+
+    return x_r, y_r, yaw_r, dist_c
+
+
 # ─── UART ────────────────────────────────────────────────────────────────────
 
 def open_uart(device: str, baudrate: int):
@@ -401,6 +442,14 @@ def main() -> int:
 
     print(f"ArUco: {dictionary_name}, marker={marker_length_m*1000:.0f}mm, "
           f"valid_ids={valid_ids or 'all'}, policy={selection_policy}")
+
+    # ── Wall tag ID list ──────────────────────────────────────────────────
+    # Vertical wall tags (as opposed to markers on the floor/xy plane)
+    wall_tag_ids = set(int(i) for i in cfg.get("wall_tag_ids", []))
+    if wall_tag_ids:
+        print(f"Vertical wall tag IDs: {sorted(wall_tag_ids)}")
+    else:
+        print("No vertical wall tags configured.")
 
     # ── Picamera2 ──────────────────────────────────────────────────────────
     try:
@@ -530,9 +579,18 @@ def main() -> int:
                     rvec = rvecs[idx]
                     tvec = tvecs[idx]
 
-                    x_r, y_r, yaw_r, dist_c = marker_robot_pose(
-                        tvec, rvec, R_rc, t_rc
-                    )
+                    # Check if this is a vertical wall tag
+                    is_wall_tag = marker_id in wall_tag_ids
+                    
+                    # Use appropriate pose function based on tag orientation
+                    if is_wall_tag:
+                        x_r, y_r, yaw_r, dist_c = wall_tag_robot_pose(
+                            tvec, rvec, R_rc, t_rc
+                        )
+                    else:
+                        x_r, y_r, yaw_r, dist_c = marker_robot_pose(
+                            tvec, rvec, R_rc, t_rc
+                        )
                     yaw_deg = math.degrees(yaw_r)
 
                     # qual: simple quality based on marker area in pixels
@@ -551,6 +609,7 @@ def main() -> int:
                         "rvec": rvec,
                         "tvec": tvec,
                         "corners_idx": idx,
+                        "is_wall_tag": is_wall_tag,
                     })
 
                     if annotate_display or ann_dir:
@@ -580,8 +639,9 @@ def main() -> int:
             # ── Transmit and log ───────────────────────────────────────────
             for d in selected:
                 detect_count += 1
+                tag_type = "WALL" if d.get("is_wall_tag", False) else "TAG"
                 if args.verbose or True:
-                    print(f"  ID={d['id']:2d} x={d['x_r']:+.3f}m y={d['y_r']:+.3f}m "
+                    print(f"  {tag_type} ID={d['id']:2d} x={d['x_r']:+.3f}m y={d['y_r']:+.3f}m "
                           f"yaw={d['yaw_deg']:+6.1f}deg dist={d['dist_c']:.3f}m "
                           f"qual={d['qual']}")
 
