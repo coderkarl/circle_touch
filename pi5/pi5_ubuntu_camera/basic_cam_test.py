@@ -1,0 +1,205 @@
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Capture camera stream with rpicam-vid, detect ArUco markers, save detection frames."
+    )
+    parser.add_argument(
+        "--device",
+        default="/dev/video0",
+        help="Camera device index or path (default: /dev/video0)",
+    )
+    parser.add_argument("--hz", type=float, default=10.0, help="Capture rate in Hz (default: 10)")
+    parser.add_argument("--width", type=int, default=1280, help="Frame width (default: 1280)")
+    parser.add_argument("--height", type=int, default=720, help="Frame height (default: 720)")
+    return parser.parse_args()
+
+
+def parse_device(device_arg: str) -> int | str:
+    return int(device_arg) if device_arg.isdigit() else device_arg
+
+
+def run_rpicam_vid_stream(args: argparse.Namespace, output_dir: Path) -> None:
+    """Capture continuous MJPEG video with rpicam-vid, decode frames, detect ArUco, save detections."""
+    width, height = args.width, args.height
+    
+    env = os.environ.copy()
+    local_lib = "/usr/local/lib/aarch64-linux-gnu"
+    env["LD_LIBRARY_PATH"] = f"{local_lib}:{env.get('LD_LIBRARY_PATH', '')}".rstrip(":")
+    env.setdefault("LIBCAMERA_IPA_MODULE_PATH", f"{local_lib}/libcamera/ipa")
+
+    cmd = [
+        "/usr/local/bin/rpicam-vid",
+        "--codec", "mjpeg",
+        "--framerate", str(int(args.hz)),
+        "--width", str(width),
+        "--height", str(height),
+        "--nopreview",
+        "-t", "0",
+        "-o", "-",
+    ]
+
+    if str(args.device).isdigit():
+        cmd.extend(["--camera", str(args.device)])
+
+    print("Starting rpicam-vid MJPEG stream capture.")
+    print(f"Command: {' '.join(cmd)}")
+    print(f"Detecting ArUco markers. Saving frames with detections to {output_dir}.")
+    print("Press Ctrl+C to stop.")
+
+    try:
+        proc = subprocess.Popen(
+            cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
+        )
+        # Check if process started ok
+        time.sleep(0.5)
+        if proc.poll() is not None:
+            stderr = proc.stderr.read().decode('utf-8', errors='ignore')
+            print(f"ERROR: rpicam-vid exited immediately with code {proc.returncode}")
+            print(f"stderr:\n{stderr}")
+            raise SystemExit("rpicam-vid startup failed")
+    except FileNotFoundError:
+        raise SystemExit("ERROR: /usr/local/bin/rpicam-vid not found")
+
+    frame_count = 0
+    detections_count = 0
+    buffer = b""
+    jpeg_start = b'\xff\xd8'
+    jpeg_end = b'\xff\xd9'
+
+    try:
+        while True:
+            chunk = proc.stdout.read(65536)
+            if not chunk:
+                stderr = proc.stderr.read().decode('utf-8', errors='ignore')
+                if stderr:
+                    print(f"rpicam-vid stderr:\n{stderr}", file=sys.stderr)
+                print("ERROR: rpicam-vid stdout ended unexpectedly")
+                break
+            buffer += chunk
+
+            # Find and extract complete JPEG frames
+            while True:
+                start_idx = buffer.find(jpeg_start)
+                if start_idx == -1:
+                    break
+                
+                end_idx = buffer.find(jpeg_end, start_idx)
+                if end_idx == -1:
+                    # Incomplete JPEG, keep it in buffer
+                    buffer = buffer[start_idx:]
+                    break
+                
+                jpeg_data = buffer[start_idx : end_idx + 2]
+                buffer = buffer[end_idx + 2:]
+
+                # Decode JPEG
+                nparr = np.frombuffer(jpeg_data, np.uint8)
+                bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if bgr is None:
+                    continue
+
+                frame_count += 1
+
+                # Detect ArUco markers (compatible with OpenCV 3.4+)
+                try:
+                    # New API (OpenCV 4.7.0+)
+                    adict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+                    corners, ids, rejected = cv2.aruco.detectMarkers(bgr, adict)
+                except AttributeError:
+                    # Older API (OpenCV 3.4-4.6)
+                    adict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
+                    corners, ids, rejected = cv2.aruco.detectMarkers(bgr, adict)
+
+                if ids is not None and len(ids) > 0:
+                    detections_count += 1
+                    capture_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    file_path = output_dir / f"frame_with_aruco_{capture_ts}.jpg"
+                    cv2.imwrite(str(file_path), bgr)
+                    print(f"Found {len(ids)} ArUco marker(s) in frame {frame_count}, saved.")
+
+                if frame_count % 100 == 0:
+                    print(f"Processed {frame_count} frames, {detections_count} with ArUco detections.")
+
+    except KeyboardInterrupt:
+        print(f"\nStopped. Processed {frame_count} frames, found ArUco in {detections_count}.")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.hz <= 0:
+        raise SystemExit("ERROR: --hz must be > 0")
+    if args.width <= 0 or args.height <= 0:
+        raise SystemExit("ERROR: --width and --height must be > 0")
+
+    output_dir = Path.home() / "cam_test"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    device = parse_device(args.device)
+    period_s = 1.0 / args.hz
+    cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    if not cap.isOpened():
+        print(f"WARN: Camera not opened with OpenCV ({args.device})")
+        run_rpicam_vid_stream(args, output_dir)
+        return
+
+    print(
+        f"Saving frames to {output_dir} at {args.hz:g} Hz "
+        f"({args.width}x{args.height}) from {args.device}. Press Ctrl+C to stop."
+    )
+    frame_count = 0
+    next_capture_time = time.monotonic()
+
+    try:
+        while True:
+            now = time.monotonic()
+            if now < next_capture_time:
+                time.sleep(next_capture_time - now)
+
+            ok, frame = cap.read()
+            capture_ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+            if ok and frame is not None:
+                file_path = output_dir / f"frame_{capture_ts}.jpg"
+                cv2.imwrite(str(file_path), frame)
+                frame_count += 1
+                if frame_count % 10 == 0:
+                    print(f"Captured {frame_count} frames")
+            else:
+                print("WARN: Frame read failed, switching to rpicam-vid stream")
+                cap.release()
+                run_rpicam_vid_stream(args, output_dir)
+                return
+
+            next_capture_time += period_s
+    except KeyboardInterrupt:
+        print(f"Stopped. Captured {frame_count} frames.")
+    finally:
+        cap.release()
+
+
+if __name__ == "__main__":
+    main()
