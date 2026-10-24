@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "i2c_bus": 1,
+  "mux_address": 112,
+  "period_ms": 20,
+  "timing_budget_us": 33000,
+  "max_valid_mm": 180,
+  "stale_s": 0.2,
+  "sensors": {
+    "left":   {"type": "vl6180x", "channel": 0, "x_m": 0.030, "y_m":  0.030, "angle_deg":  90.0, "offset_mm": 0.0, "max_valid_mm": 190},
+    "front":  {"type": "vl6180x", "channel": 1, "x_m": 0.040, "y_m":  0.010, "angle_deg":   0.0, "offset_mm": 0.0, "max_valid_mm": 190},
+    "right":  {"type": "vl6180x", "channel": 3, "x_m": 0.030, "y_m": -0.030, "angle_deg": -90.0, "offset_mm": 0.0, "max_valid_mm": 190},
+    "front2": {"type": "vl53l0x", "channel": 2, "x_m": 0.040, "y_m": -0.010, "angle_deg":   0.0, "offset_mm": 0.0, "max_valid_mm": 800, "min_valid_mm": 40, "beam_half_angle_deg": 12.0, "sigma_range_m": 0.02}
+  },
+  "course_file": "course.json",
+  "particles": 150,
+  "sigma_range_m": 0.015,
+  "outlier_floor": 0.05,
+  "motion": {
+    "trans_per_m": 0.05,
+    "rot_per_rad": 0.05,
+    "rot_per_m": 0.05,
+    "trans_min_m": 0.0005,
+    "rot_min_rad": 0.0005,
+    "missed_msg_xy_m": 0.02,
+    "missed_msg_yaw_deg": 3.0
+  },
+  "initial_pose": {"x_m": 0.0, "y_m": 0.0, "yaw_deg": 0.0, "sigma_xy_m": 0.02, "sigma_yaw_deg": 3.0},
+  "set_pose_sigma": {"sigma_xy_m": 0.01, "sigma_yaw_deg": 2.0},
+  "loc_period_ms": 100
+}

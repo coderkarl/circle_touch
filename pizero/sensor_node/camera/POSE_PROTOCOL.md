@@ -62,6 +62,43 @@ HB,10003
 
 ---
 
+### ODOM — odometry delta (3pi+ → Pi), ~20 Hz
+
+```
+ODOM,<seq>,<ts_ms>,<d_dist_m>,<d_yaw_deg>\n
+```
+
+`seq` is a 16-bit counter (gaps mean dropped messages). `d_dist_m` and `d_yaw_deg` are the signed
+changes since the previous ODOM; yaw is CCW positive.
+
+### SET — true pose (3pi+ → Pi)
+
+```
+SET,<x_m>,<y_m>,<yaw_deg>\n
+```
+
+Sent at startup, when the Pi first appears, and after an ArUco pose correction. Resets the
+localizer particles around that pose.
+
+### LOC — ToF localizer pose (Pi → 3pi+), ~10 Hz
+
+```
+LOC,<seq>,<ts_ms>,<x_m>,<y_m>,<yaw_deg>,<conf>\n
+```
+
+Map-frame pose after applying ODOM up to `seq` (-1 if none yet). `conf` is 0..1 and reflects
+particle spread only.
+
+### TOF — raw ranges (Pi → 3pi+), ~10 Hz
+
+```
+TOF,<ts_ms>,<left_mm>,<front_mm>,<right_mm>\n
+```
+
+`-1` = sensor error or stale, `255` = no target within range.
+
+---
+
 ## Robot Frame Convention
 
 ```

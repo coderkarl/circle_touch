@@ -1,0 +1,363 @@
+{
+  "course": {
+    "inner_point_rows": 6,
+    "inner_point_cols": 13,
+    "row_heights_in": [
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      6
+    ],
+    "col_widths_in": [
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      7,
+      5
+    ],
+    "wall_height_in": 2,
+    "course_axes": {
+      "x_direction": "down_rows",
+      "y_direction": "right_cols"
+    },
+    "target_marker": {
+      "type": "aruco",
+      "x_axis_aligned_with_course_x": true
+    }
+  },
+  "targets": [
+    {
+      "row": 1,
+      "col": 1,
+      "id": 0
+    },
+    {
+      "row": 1,
+      "col": 4,
+      "id": 2
+    },
+    {
+      "row": 1,
+      "col": 6,
+      "id": 3
+    },
+    {
+      "row": 6,
+      "col": 1,
+      "id": 1
+    },
+    {
+      "row": 6,
+      "col": 10,
+      "id": 4
+    }
+  ],
+  "horizontal_walls": [
+    {
+      "row": 0,
+      "col": 0
+    },
+    {
+      "row": 0,
+      "col": 1
+    },
+    {
+      "row": 0,
+      "col": 2
+    },
+    {
+      "row": 0,
+      "col": 3
+    },
+    {
+      "row": 0,
+      "col": 4
+    },
+    {
+      "row": 0,
+      "col": 5
+    },
+    {
+      "row": 0,
+      "col": 6
+    },
+    {
+      "row": 0,
+      "col": 7
+    },
+    {
+      "row": 0,
+      "col": 8
+    },
+    {
+      "row": 0,
+      "col": 9
+    },
+    {
+      "row": 0,
+      "col": 10
+    },
+    {
+      "row": 0,
+      "col": 11
+    },
+    {
+      "row": 0,
+      "col": 12
+    },
+    {
+      "row": 0,
+      "col": 13
+    },
+    {
+      "row": 2,
+      "col": 10
+    },
+    {
+      "row": 2,
+      "col": 11
+    },
+    {
+      "row": 3,
+      "col": 7
+    },
+    {
+      "row": 3,
+      "col": 8
+    },
+    {
+      "row": 3,
+      "col": 9
+    },
+    {
+      "row": 4,
+      "col": 13
+    },
+    {
+      "row": 5,
+      "col": 2
+    },
+    {
+      "row": 5,
+      "col": 5
+    },
+    {
+      "row": 5,
+      "col": 6
+    },
+    {
+      "row": 5,
+      "col": 9
+    },
+    {
+      "row": 5,
+      "col": 10
+    },
+    {
+      "row": 7,
+      "col": 0
+    },
+    {
+      "row": 7,
+      "col": 1
+    },
+    {
+      "row": 7,
+      "col": 2
+    },
+    {
+      "row": 7,
+      "col": 3
+    },
+    {
+      "row": 7,
+      "col": 4
+    },
+    {
+      "row": 7,
+      "col": 5
+    },
+    {
+      "row": 7,
+      "col": 6
+    },
+    {
+      "row": 7,
+      "col": 7
+    },
+    {
+      "row": 7,
+      "col": 8
+    },
+    {
+      "row": 7,
+      "col": 9
+    },
+    {
+      "row": 7,
+      "col": 10
+    },
+    {
+      "row": 7,
+      "col": 11
+    },
+    {
+      "row": 7,
+      "col": 12
+    },
+    {
+      "row": 7,
+      "col": 13
+    }
+  ],
+  "vertical_walls": [
+    {
+      "row": 0,
+      "col": 0
+    },
+    {
+      "row": 0,
+      "col": 3
+    },
+    {
+      "row": 0,
+      "col": 5
+    },
+    {
+      "row": 0,
+      "col": 8
+    },
+    {
+      "row": 0,
+      "col": 14
+    },
+    {
+      "row": 1,
+      "col": 0
+    },
+    {
+      "row": 1,
+      "col": 3
+    },
+    {
+      "row": 1,
+      "col": 5
+    },
+    {
+      "row": 1,
+      "col": 14
+    },
+    {
+      "row": 2,
+      "col": 0
+    },
+    {
+      "row": 2,
+      "col": 3
+    },
+    {
+      "row": 2,
+      "col": 5
+    },
+    {
+      "row": 2,
+      "col": 10
+    },
+    {
+      "row": 2,
+      "col": 14
+    },
+    {
+      "row": 3,
+      "col": 0
+    },
+    {
+      "row": 3,
+      "col": 5
+    },
+    {
+      "row": 3,
+      "col": 9
+    },
+    {
+      "row": 3,
+      "col": 14
+    },
+    {
+      "row": 4,
+      "col": 0
+    },
+    {
+      "row": 4,
+      "col": 5
+    },
+    {
+      "row": 4,
+      "col": 9
+    },
+    {
+      "row": 4,
+      "col": 14
+    },
+    {
+      "row": 5,
+      "col": 0
+    },
+    {
+      "row": 5,
+      "col": 2
+    },
+    {
+      "row": 5,
+      "col": 9
+    },
+    {
+      "row": 5,
+      "col": 14
+    },
+    {
+      "row": 6,
+      "col": 0
+    },
+    {
+      "row": 6,
+      "col": 2
+    },
+    {
+      "row": 6,
+      "col": 9
+    },
+    {
+      "row": 6,
+      "col": 14
+    }
+  ],
+  "robot_lidar_config": {
+    "lidar_position_in_bot_in": {
+      "x_in": 0.0,
+      "y_in": 0.0,
+      "z_in": 3.0
+    },
+    "lidar_euler_zyx_deg": {
+      "yaw_deg": 0.0,
+      "pitch_deg": 10.0,
+      "roll_deg": 0.0
+    },
+    "notes": {
+      "z_zero_reference": "ground_level",
+      "pitch_sign": "positive_pitch_points_down"
+    }
+  }
+}

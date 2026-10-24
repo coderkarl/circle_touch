@@ -416,6 +416,26 @@ python3 /home/pi/sensor_node/camera/aruco_robot_pose.py
 
 ---
 
+## ToF Distance Sensors (VL6180X x3 via PCA9548A)
+
+Files are in `pizero/sensor_node/tof/`; `aruco_robot_pose.py` starts the localizer thread (disable with `--no-tof`).
+
+```bash
+sudo raspi-config                  # Interface Options -> I2C -> Yes
+sudo apt install -y python3-smbus2 python3-numpy
+# optional faster bus: add to /boot/firmware/config.txt
+#   dtparam=i2c_arm_baudrate=400000
+i2cdetect -y 1                     # expect 0x70 (mux)
+python3 ~/sensor_node/tof/tof_test.py
+python3 ~/sensor_node/tof/tof_localizer.py --selftest
+```
+
+Edit `tof/tof_config.json` for mux channels, sensor mounts and filter tuning. Each sensor has a `type`
+(`vl6180x` or `vl53l0x`) and its own `max_valid_mm`; wide-FoV sensors can set `beam_half_angle_deg`. `course.json` is a copy of
+`sim/bb_course_fall2026.json`; re-copy it when the course changes.
+
+---
+
 ## Next Steps (Implementation Order)
 
 1. Flash Pi Zero 2W with Raspberry Pi OS Lite (Bookworm, 32-bit), enable SSH.

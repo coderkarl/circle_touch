@@ -19,6 +19,9 @@ import sys
 # False = run navigation without camera input
 CAMERA_INPUT_ENABLED = True
 
+# ToF localizer on the Pi Zero (needs the camera UART link): odometry deltas out,
+# fused pose + left/front/right distances in.
+TOF_ENABLED = True
 line_sensors = robot.LineSensors()
 encoders = robot.Encoders()
 motors = robot.Motors()
@@ -292,6 +295,22 @@ angle_since_tag_deg = 999.0
 _prev_odom_dist_tag = bot_odom.dist
 _prev_bot_rad_tag = bot_odom.bot_rad
 
+tof_active = TOF_ENABLED and cam is not None
+odom_seq = 0
+pose_hist = {}   # ODOM seq -> (x, y, rad) sent with that seq, for latency-correct LOC blending
+pi_was_alive = False
+
+loc_min_conf = 0.5        # ignore LOC poses with wider particle spread than this
+loc_gain = 0.2            # fraction of the LOC-vs-odom error applied per LOC message
+loc_max_corr_m = 0.15     # reject LOC poses farther than this from odometry
+loc_max_corr_deg = 20.0
+
+tof_front_slow_mm = 80    # slow down when front range is below this
+tof_front_stop_mm = 30    # slowest speed scale at or below this
+tof_front_min_scale = 0.25
+tof_side_mm = 40          # steer away when a side range is below this
+tof_steer_mps = 0.05      # max differential wheel speed added for steering
+
 while True:
     #motors.set_speeds(max_speed, max_speed)
     bump_sensors.read()
@@ -312,6 +331,37 @@ while True:
                 pass
         cam_pose = cam.get_nearest(fresh_only=True)
 
+    tof_reading = None
+    if tof_active:
+        pi_alive_loop = cam.pi_alive()
+        if pi_alive_loop and not pi_was_alive:
+            # Pi (re)started: give its filter our pose.
+            cam.send_set(bot_odom.botx, bot_odom.boty, wrap_angle_deg(math.degrees(bot_odom.bot_rad)))
+            pose_hist.clear()
+        pi_was_alive = pi_alive_loop
+
+        tof_reading = cam.get_tof(fresh_only=True)
+
+        loc = cam.take_loc()
+        if loc is not None and loc["conf"] >= loc_min_conf:
+            ref = pose_hist.get(loc["seq"])
+            if ref is not None:
+                loc_err_x = loc["x_m"] - ref[0]
+                loc_err_y = loc["y_m"] - ref[1]
+                loc_err_h = wrap_angle_deg(loc["yaw_deg"] - wrap_angle_deg(math.degrees(ref[2])))
+                if ((loc_err_x * loc_err_x + loc_err_y * loc_err_y) ** 0.5 <= loc_max_corr_m
+                        and abs(loc_err_h) <= loc_max_corr_deg):
+                    corr_x = loc_gain * loc_err_x
+                    corr_y = loc_gain * loc_err_y
+                    corr_h = math.radians(loc_gain * loc_err_h)
+                    bot_odom.botx += corr_x
+                    bot_odom.boty += corr_y
+                    bot_odom.bot_rad += corr_h
+                    _prev_bot_rad_tag = bot_odom.bot_rad
+                    # Keep history consistent so later LOCs are not corrected twice.
+                    for k in list(pose_hist.keys()):
+                        p = pose_hist[k]
+                        pose_hist[k] = (p[0] + corr_x, p[1] + corr_y, p[2] + corr_h)
     cam_x_m    = cam_pose["x_m"]    if cam_pose else None
     cam_y_m    = cam_pose["y_m"]    if cam_pose else None
     cam_yaw_deg = cam_pose["yaw_deg"] if cam_pose else None
@@ -381,6 +431,10 @@ while True:
                     angle_since_tag_deg = 0.0
                     _prev_odom_dist_tag = bot_odom.dist
                     _prev_bot_rad_tag = bot_odom.bot_rad
+                    if corr["applied"] and tof_active:
+                        cam.send_set(bot_odom.botx, bot_odom.boty,
+                                     wrap_angle_deg(math.degrees(bot_odom.bot_rad)))
+                        pose_hist.clear()
                 else:
                     print("Tag wait timeout: no qual>=4 sample for any known marker within 1.0 s")
 
@@ -397,9 +451,18 @@ while True:
         delta_dist = bot_odom.dist - _prev_odom_dist_tag
         _prev_odom_dist_tag = bot_odom.dist
         distance_since_tag += delta_dist
-        delta_angle_deg = abs(wrap_angle_deg(math.degrees(bot_odom.bot_rad) - math.degrees(_prev_bot_rad_tag)))
+        delta_angle_deg = wrap_angle_deg(math.degrees(bot_odom.bot_rad) - math.degrees(_prev_bot_rad_tag))
         _prev_bot_rad_tag = bot_odom.bot_rad
-        angle_since_tag_deg += delta_angle_deg
+        angle_since_tag_deg += abs(delta_angle_deg)
+
+        if tof_active:
+            odom_seq = (odom_seq + 1) & 0xFFFF
+            try:
+                cam.send_odom(odom_seq, delta_dist, delta_angle_deg)
+            except Exception as exc:
+                print("send_odom exception:", type(exc).__name__)
+            pose_hist[odom_seq] = (bot_odom.botx, bot_odom.boty, bot_odom.bot_rad)
+            pose_hist.pop((odom_seq - 16) & 0xFFFF, None)
 
         line = line_sensors.read()
         line_sensors.start_read()
@@ -495,6 +558,27 @@ while True:
             state = state_stop
             next_state = state_track
     
+    # Wall avoidance from the left/front/right ToF ranges (255 = nothing in range).
+    if state == state_track and tof_reading is not None:
+        tof_l = tof_reading["l_mm"]
+        tof_c = tof_reading["c_mm"]
+        tof_r = tof_reading["r_mm"]
+        tof_scale = 1.0
+        tof_steer = 0.0
+        if tof_c is not None and tof_c < tof_front_slow_mm:
+            frac = (tof_c - tof_front_stop_mm) / (tof_front_slow_mm - tof_front_stop_mm)
+            tof_scale = max(tof_front_min_scale, min(1.0, frac))
+            open_l = tof_l if tof_l is not None else 255
+            open_r = tof_r if tof_r is not None else 255
+            tof_steer += -tof_steer_mps if open_l > open_r else tof_steer_mps
+        if tof_l is not None and tof_l < tof_side_mm:
+            tof_steer += tof_steer_mps * (tof_side_mm - tof_l) / tof_side_mm
+        if tof_r is not None and tof_r < tof_side_mm:
+            tof_steer -= tof_steer_mps * (tof_side_mm - tof_r) / tof_side_mm
+        tof_steer = max(-tof_steer_mps, min(tof_steer_mps, tof_steer))
+        left_target_mps = left_target_mps * tof_scale + tof_steer
+        right_target_mps = right_target_mps * tof_scale - tof_steer
+
     # Handle arrival at waypoint
     if near_goal and wp_ind != last_processed_wp:
         # Determine waypoint type and behavior

@@ -59,6 +59,8 @@ class CameraPoseSerial:
         self._detections = {}   # {int(marker_id): detection_dict}
         self._last_hb_ms = 0    # timestamp of last HB message
         self._parse_errors = 0
+        self._loc = None        # latest unconsumed LOC dict
+        self._tof = None        # latest TOF dict
 
         if tx_pin is not None and rx_pin is not None:
             self.uart = machine.UART(uart_id, baudrate=baudrate,
@@ -185,6 +187,33 @@ class CameraPoseSerial:
         """Clear all stored detections."""
         self._detections.clear()
 
+    # ToF localizer link (Pi Zero <-> 3pi+)
+
+    def send_odom(self, seq, d_dist_m, d_yaw_deg):
+        """Send odometry deltas since the previous ODOM message."""
+        self.uart.write("ODOM,%d,%d,%.4f,%.2f\n" % (seq, time.ticks_ms() & 0x3FFFFFFF, d_dist_m, d_yaw_deg))
+
+    def send_set(self, x_m, y_m, yaw_deg):
+        """Tell the Pi localizer the true pose (startup, Pi restart, tag correction)."""
+        self.uart.write("SET,%.4f,%.4f,%.2f\n" % (x_m, y_m, yaw_deg))
+
+    def take_loc(self):
+        """Return the newest LOC dict not yet consumed (and fresh), else None."""
+        loc = self._loc
+        self._loc = None
+        if loc is None or time.ticks_diff(time.ticks_ms(), loc["ts_local_ms"]) >= self.stale_ms:
+            return None
+        return loc
+
+    def get_tof(self, fresh_only=True):
+        """Return latest TOF dict (l_mm, c_mm, r_mm; None if invalid, 255 = no target), or None."""
+        tof = self._tof
+        if tof is None:
+            return None
+        if fresh_only and time.ticks_diff(time.ticks_ms(), tof["ts_local_ms"]) >= self.stale_ms:
+            return None
+        return tof
+
     # Internal
 
     def _parse_line(self, line):
@@ -193,6 +222,49 @@ class CameraPoseSerial:
             self._parse_pose(line)
         elif line.startswith("HB,"):
             self._last_hb_ms = time.ticks_ms()
+        elif line.startswith("LOC,"):
+            self._parse_loc(line)
+        elif line.startswith("TOF,"):
+            self._parse_tof(line)
+
+    def _parse_loc(self, line):
+        """Parse:  LOC,<seq>,<ts_ms>,<x_m>,<y_m>,<yaw_deg>,<conf>"""
+        parts = line.split(",")
+        if len(parts) != 7:
+            self._parse_errors += 1
+            return
+        try:
+            self._loc = {
+                "seq":         int(parts[1]),
+                "ts_local_ms": time.ticks_ms(),
+                "x_m":         float(parts[3]),
+                "y_m":         float(parts[4]),
+                "yaw_deg":     float(parts[5]),
+                "conf":        float(parts[6]),
+            }
+        except ValueError:
+            self._parse_errors += 1
+            return
+        self._last_hb_ms = time.ticks_ms()
+
+    def _parse_tof(self, line):
+        """Parse:  TOF,<ts_ms>,<l_mm>,<c_mm>,<r_mm>  (-1 = invalid)"""
+        parts = line.split(",")
+        if len(parts) != 5:
+            self._parse_errors += 1
+            return
+        try:
+            vals = [int(parts[2]), int(parts[3]), int(parts[4])]
+        except ValueError:
+            self._parse_errors += 1
+            return
+        self._tof = {
+            "ts_local_ms": time.ticks_ms(),
+            "l_mm": vals[0] if vals[0] >= 0 else None,
+            "c_mm": vals[1] if vals[1] >= 0 else None,
+            "r_mm": vals[2] if vals[2] >= 0 else None,
+        }
+        self._last_hb_ms = time.ticks_ms()
 
     def _parse_pose(self, line):
         """

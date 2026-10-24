@@ -49,6 +49,7 @@ import json
 import math
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -369,6 +370,10 @@ def main() -> int:
                         help="Camera extrinsics JSON (default: camera_extrinsics.json)")
     parser.add_argument("--no-uart", action="store_true",
                         help="Disable UART output (bench test / laptop mode)")
+    parser.add_argument("--tof-config", default="../tof/tof_config.json",
+                        help="ToF localizer config JSON (default: ../tof/tof_config.json)")
+    parser.add_argument("--no-tof", action="store_true",
+                        help="Disable the ToF localizer thread")
     parser.add_argument("--save-annotated", default="",
                         help="If set, save annotated JPEG frames to this directory")
     parser.add_argument("--save-raw", default="",
@@ -478,6 +483,23 @@ def main() -> int:
             print(f"UART: {uart_dev} @ {uart_baud}")
         else:
             print("UART unavailable — continuing without serial output.")
+
+    # ── ToF localizer thread ──────────────────────────────────────────────
+    uart_lock = threading.Lock()
+    tof_node = None
+    if not args.no_tof:
+        try:
+            sys.path.insert(0, str(Path(resolve(args.tof_config)).resolve().parent))
+            from tof_localizer import LocalizationNode
+            tof_cfg_path = resolve(args.tof_config)
+            with open(tof_cfg_path, "r") as f:
+                tof_enabled = bool(json.load(f).get("enabled", True))
+            if tof_enabled:
+                tof_node = LocalizationNode(tof_cfg_path, uart, uart_lock, args.verbose)
+                tof_node.start()
+                print("ToF localizer started.")
+        except Exception as e:
+            print(f"ToF localizer unavailable: {e}", file=sys.stderr)
 
     # ── Annotated output ──────────────────────────────────────────────────
     ann_dir: Optional[Path] = None
@@ -647,9 +669,10 @@ def main() -> int:
 
                 if uart is not None:
                     try:
-                        send_pose(uart, d["id"], timestamp_ms,
-                                  d["x_r"], d["y_r"], d["yaw_deg"],
-                                  d["dist_c"], d["qual"])
+                        with uart_lock:
+                            send_pose(uart, d["id"], timestamp_ms,
+                                      d["x_r"], d["y_r"], d["yaw_deg"],
+                                      d["dist_c"], d["qual"])
                     except Exception as e:
                         if args.verbose:
                             print(f"  UART send error: {e}")
@@ -687,6 +710,9 @@ def main() -> int:
 
     finally:
         picam2.stop()
+        if tof_node is not None:
+            tof_node.stop()
+            tof_node.join(timeout=2.0)
         if uart is not None:
             uart.close()
         if log_file is not None:
